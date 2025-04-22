@@ -4,44 +4,96 @@ This project is part of a bachelor thesis focused on enhancing program debugging
 
 ## Project Overview
 
-The Smart Adaptive Visual Tracing system analyzes code execution in real-time, tracks changes in data structures, and visualizes them in the most appropriate format to enhance understanding. By integrating rule-based logic with Mistral AI's capabilities, the system offers customized tracing options that cater to different programming scenarios, making it particularly effective for complex software environments.
+The Smart Adaptive Visual Tracer system analyzes Python code execution in real-time, tracks changes in fundamental data structures (arrays, trees, graphs), and selects appropriate visualization techniques to enhance program comprehension and debugging. By integrating deterministic code tracing via the Model Context Protocol (MCP) with the analytical capabilities of Mistral AI for visualization selection, the system offers customized tracing options adaptable to different programming scenarios, proving particularly effective for understanding complex software environments.
 
 ## System Architecture
 
-The project consists of three main components that work together:
+The project consists of three main components that work together, leveraging the Model Context Protocol (MCP) for standardized communication between the core analysis engine and the application backend:
 
-### 1. MCP Server
-The MCP server (Model Context Protocol) is responsible for:
-- Analyzing submitted code snippets
-- Tracking changes in arrays, trees, and graphs during execution
-- Identifying when data structures are created, modified, or accessed
-- Generating execution data with detailed context
-- Providing a powerful tracing system for code analysis
+### 1. MCP Server (server.py)
+Role: This component acts as a dedicated, specialized MCP Server. Its sole responsibility is to perform the complex and potentially high-risk task of executing submitted Python code snippets within a controlled tracing environment.
 
-The server uses Python's introspection capabilities to monitor code execution and capture data structure transformations.
+Functionality:
+- Receives Python code snippets via the MCP call_tool mechanism
+- Utilizes Python's sys.settrace function to intercept execution events (line execution, function calls, returns).
+- Identifies and tracks the state changes of fundamental data structures (lists identified as arrays, specific object patterns identified as trees, dictionary patterns identified as graphs) during the code's execution.
+- Records a detailed history of operations (creation, modification, access) performed on these tracked data structures.
+- Serializes the captured trace data, including data structure states and operation details, into a structured JSON format.
+- Returns this structured JSON trace data as the result of the analyze_code tool invocation via the MCP protocol
+
+MCP Interaction: Exposes a single MCP tool named analyze_code. It listens for incoming MCP client connections (via stdio) and responds to call_tool requests for analyze_code
 
 ### 2. MCP Client & Flask Server
-The MCP client connects to the MCP server and handles:
-- Sending code snippets to the server for analysis
-- Processing and filtering the resulting execution data
-- Using Mistral AI to determine the most effective visualization type for each data structure
-- Storing processed data in Redis for efficient access
-- Providing a Flask server with RESTful API endpoints for the frontend
+Role: This component acts as the central MCP Host application. It orchestrates the overall workflow, manages communication with both the MCP Server and the frontend, and integrates the LLM for downstream analysis
 
-The client makes intelligent decisions about how to visualize different data structures based on their characteristics, complexity, and change patterns.
+Functionality:
+- Flask Server (simple_server.py): Provides RESTful API endpoints for the React frontend to submit code and retrieve analysis results and visualization recommendations.
+- MCP Client Logic (client.py)
+   - Instantiates and manages the connection to the MCP Server using the MCP Python SDK (ClientSession, StdioServerParameters). This establishes the standardized communication channel defined by MCP. 
+   - Programmatic Tool Invocation: Upon receiving a request from the Flask API, this component programmatically invokes the analyze_code tool on the MCP Server. It explicitly calls session.call_tool("analyze_code", {"code_snippet":...}). The decision to call this specific tool is driven by the application logic, not by an LLM
+   - Receives the structured JSON trace data from the MCP Server via the MCP response.
+   - Performs initial filtering and processing on the raw trace data to prepare it for visualization and LLM analysis.
+   - LLM Integration (Downstream): Sends the processed trace data for each structure type (arrays, trees, graphs) to the Mistral AI LLM. The LLM's task here is not tool selection, but rather analyzing the trace data to determine the most effective visualization technique (e.g., Timeline Array vs. Element Focused).
+   - Stores the processed trace data and the LLM's visualization recommendations in Redis for efficient retrieval by the Flask API endpoints.
+   - Redis acts as an in-memory data store for caching processed trace data and LLM visualization recommendations, facilitating fast retrieval by the Flask API for the frontend
+
+MCP Interaction: Acts as the MCP Host containing the MCP Client logic. It initiates the connection to the MCP Server and explicitly calls the analyze_code tool based on application requirements
 
 ### 3. React Frontend
-The frontend provides:
+Role: Provides the user interface for code input, interaction, and visualization.
+
+Functionality:
 - A code input interface for submitting snippets
-- Interactive visualizations of arrays, trees, and graphs
-- Animation controls for stepping through code execution
-- Contextual information about operations being performed
+- Communicates with the Flask backend via REST API calls to submit code (/api/analyze) and fetch processed data and visualization recommendations (/api/execution_data, /api/visualization/...).
+- Renders interactive visualizations of arrays, trees, and graphs based on the data received and the visualization type recommended by the LLM.
+- Uses D3.js to create detailed, animated visualizations (e.g., Timeline Array, Element Focused, Hierarchical Tree, Radial Tree, Force-Directed Graph, Adjacency Matrix).
+- Provides playback controls (play, pause, step) to allow users to step through the execution trace and observe data structure changes over time.
+- Displays contextual information about operations being performed at each step.
 - Three specialized visualizers with multiple visualization types:
   - **ArrayVisualizer**: Timeline array, element-focused, and array comparison views
   - **TreeVisualizer**: Hierarchical and radial tree visualizations
   - **GraphVisualizer**: Force-directed and adjacency matrix representations
 
 The frontend uses D3.js to create detailed, interactive visualizations that adapt to the specific data structures being analyzed.
+
+## Model Context Protocol (MCP) Implementation Approach
+This project utilizes the Model Context Protocol (MCP) , an open standard developed by Anthropic , but employs a specific implementation pattern tailored to the system's requirements and constraints. Understanding this pattern is crucial for appreciating the system's architecture and design choices
+
+MCP's Role in this System:
+In this project, MCP serves exclusively as a standardized communication protocol  between the Flask application (acting as the MCP Host/Client) and the dedicated Python code tracing engine (acting as the MCP Server). It defines the rules and message formats (JSON-RPC 2.0)  for how the Flask backend reliably requests code analysis from the tracing server and receives the structured results. We leverage the official MCP Python SDK  to ensure compliance with the protocol standard
+
+Contrast with Dynamic LLM-Driven Tool Selection:
+A common and powerful pattern for MCP involves using the LLM itself to dynamically select which tool(s) to call based on user input or conversation context. In that pattern:   
+- User provides input to the Host application.
+- The Host sends the input to the LLM.
+- The LLM analyzes the input, consults available MCP tool descriptions (via list_tools), and decides which tool(s) to invoke and with what parameters.
+- The Host instructs its MCP Client to execute the LLM's chosen tool call(s) via the MCP protocol.
+- Results are returned to the Host and potentially back to the LLM for synthesizing a final response.
+
+This project intentionally deviates from the dynamic pattern. Here:
+- The Flask Host receives a specific request (analyze code).
+- The Host's application logic determines that the only relevant tool is analyze_code.
+- The Host programmatically instructs its MCP Client to call analyze_code on the MCP Server.
+- The trace data result is returned via MCP to the Host.
+- Only then is the LLM involved, analyzing the result of the tool call (the trace data) for the distinct purpose of selecting a visualization type.
+
+Justification for Programmatic Invocation:
+Choosing programmatic invocation over dynamic LLM selection for the analyze_code tool was a deliberate design decision based on several factors critical to this thesis project:
+
+- Enhanced Safety and Control: The core function of the MCP Server involves executing arbitrary Python code provided by the user/client via sys.settrace and exec(). This is an inherently high-risk operation. Allowing an LLM to dynamically decide when to trigger this execution and what code to pass introduces significant security vulnerabilities, such as prompt injection attacks leading to malicious code execution. Programmatic invocation ensures that the Flask Host maintains full control over when the analyze_code tool is called and exactly what code snippet is passed, drastically reducing the attack surface and aligning with MCP's security principle of treating executable tools with caution.   
+
+- Task Specificity: The system's goal regarding MCP interaction is singular and unambiguous: obtain execution trace data for a given code snippet. The analyze_code tool is the only tool required for this specific, well-defined task. Implementing dynamic LLM-based selection would add unnecessary complexity without providing functional benefits, as the choice of tool is predetermined by the application's workflow.
+
+- Reliability and Predictability: Ensuring an LLM reliably identifies the correct code snippet (especially within a larger context) and correctly formats parameters for a complex tracing tool can be challenging. Programmatic control guarantees that the intended code is analyzed and parameters are handled precisely, leading to more predictable and reliable tracing results.
+
+- Clear Separation of Concerns: This architecture creates a clean separation:
+MCP Server: Handles the specialized, high-risk task of code execution and tracing.
+Flask Host/MCP Client: Manages the application workflow, controls the invocation of the specific tracing tool via the standardized MCP interface, and prepares data.
+LLM: Focuses on a distinct, higher-level task – analyzing the structured trace data to make an informed decision about visualization, leveraging its strengths in pattern recognition and analysis without being exposed to the risks of direct code execution control.
+
+- Focus on Core Thesis Contribution: This approach allows the thesis to focus on the novel aspects of adaptive visualization and LLM-driven analysis of trace results, while still correctly utilizing MCP for its primary benefit: standardizing the communication channel to a specialized backend service. It demonstrates a practical understanding and application of the MCP standard for interoperability without requiring the implementation of complex (and in this case, risky and unnecessary) agentic tool-selection logic.
+
+In summary, while MCP enables powerful dynamic agentic behavior, this project leverages it strategically for its core strength – standardized communication – within a controlled, programmatic workflow that prioritizes safety, reliability, and architectural clarity for the specific task of visual code tracing.
 
 ## Requirements
 
@@ -87,7 +139,7 @@ Follow these step-by-step instructions to set up and run the project:
    python server.py
    ```
 
-   The server should start and display a message indicating it's ready to receive connections.
+   The server should start and the terminal will hang indicating it's ready to receive connections.
 
 ### Step 2: MCP Client & Flask Server Setup
 

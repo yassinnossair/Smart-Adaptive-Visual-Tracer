@@ -9,6 +9,7 @@ import asyncio
 from contextlib import AsyncExitStack
 from dotenv import load_dotenv
 import os
+import sys
 from mistralai.client import MistralClient
 from mistralai.models.chat_completion import ChatMessage
 import redis.asyncio as redis
@@ -254,7 +255,7 @@ class MCPClient:
     async def connect_to_server(self, server_script_path: str):
         """Connect to the MCP server"""
         try:
-            command = "/Users/yassinnossair/Smart-Adaptive-Visual-Tracer/mcp-server/.venv/bin/python"  
+            command = sys.executable
             server_params = StdioServerParameters(command=command, args=[server_script_path])
             stdio_transport = await self.exit_stack.enter_async_context(stdio_client(server_params))
             self.stdio, self.write = stdio_transport
@@ -670,7 +671,8 @@ class MCPClient:
 # replaced by Flask API calls
 async def main():
     client = MCPClient()
-    if await client.connect_to_server('/Users/yassinnossair/Smart-Adaptive-Visual-Tracer/mcp-server/server.py'):
+    server_script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'mcp-server', 'server.py'))
+    if await client.connect_to_server(server_script_path):
         code_snippet = """
 # Array operations
 elements = [5, 10, 15, 20, 25]

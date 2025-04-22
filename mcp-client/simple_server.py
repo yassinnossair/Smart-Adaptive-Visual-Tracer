@@ -16,10 +16,10 @@ app = Flask(__name__, static_folder='frontend/build')
 CORS(app, resources={r"/*": {"origins": "*"}})
 
 # Add the path to your client.py
-sys.path.append('/Users/yassinnossair/mcp-client/')
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 # Server script path
-server_script_path = '/Users/yassinnossair/Smart-Adaptive-Visual-Tracer/mcp-server/server.py'
+server_script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'mcp-server', 'server.py'))
 
 # Create a thread pool for handling async operations
 executor = ThreadPoolExecutor(max_workers=4)
