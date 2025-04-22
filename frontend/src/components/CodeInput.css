@@ -1,0 +1,132 @@
+/* CodeInput.css */
+.code-input-wrapper {
+  padding: 15px;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Make the form take up the full height */
+.code-input-wrapper form {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.code-input-wrapper .mb-3 {
+  flex-grow: 1;
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 1rem;
+}
+
+.code-input-label {
+  font-weight: 600;
+  color: #6384ff;
+  font-size: 1.1rem;
+  margin-bottom: 0.8rem;
+}
+
+/* Make the code editor much larger */
+.code-editor {
+  font-family: 'Fira Code', Consolas, Monaco, 'Andale Mono', monospace !important;
+  font-size: 14px !important;
+  background-color: #161922 !important;
+  color: #e0e0e0 !important;
+  border: 1px solid #3a3f52 !important;
+  border-radius: 8px !important;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.2) !important;
+  resize: vertical !important;
+  transition: all 0.3s !important;
+  min-height: 400px !important;
+  height: calc(100% - 60px) !important;
+  flex-grow: 1 !important;
+  padding: 12px !important;
+  outline: none !important;
+}
+
+.code-editor:focus {
+  background-color: #161922 !important;
+  color: #e0e0e0 !important;
+  border-color: #6384ff !important;
+  box-shadow: 0 0 0 0.25rem rgba(99, 132, 255, 0.25) !important;
+  outline: none !important;
+}
+
+.code-editor::placeholder {
+  color: #a0a6b5 !important;
+  opacity: 0.7 !important;
+}
+
+.code-help-text {
+  margin-top: 0.5rem;
+  font-size: 0.9rem;
+  color: #a0a6b5;
+}
+
+/* Button row should not grow */
+.code-input-wrapper .mt-4 {
+  margin-top: 1rem !important;
+  flex-shrink: 0;
+}
+
+.analyze-button {
+  background-color: #6384ff;
+  border-color: #6384ff;
+  border-radius: 30px;
+  padding: 0.5rem 1.5rem;
+  font-weight: 500;
+  transition: all 0.3s;
+  box-shadow: 0 2px 6px rgba(99, 132, 255, 0.3);
+}
+
+.analyze-button:hover:not(:disabled) {
+  background-color: #5373ea;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(99, 132, 255, 0.4);
+}
+
+.reset-button {
+  border-radius: 30px;
+  padding: 0.5rem 1.5rem;
+  font-weight: 500;
+  transition: all 0.3s;
+  background-color: #161922 !important;
+  color: #e0e0e0 !important;
+  border: 1px solid #3a3f52 !important;
+}
+
+.reset-button:hover:not(:disabled) {
+  background-color: rgba(99, 132, 255, 0.1) !important;
+  color: #e0e0e0 !important;
+  transform: translateY(-2px);
+}
+
+.error-alert, .success-alert {
+  border-radius: 8px;
+  margin-top: 1rem;
+}
+
+.error-alert {
+  background-color: rgba(255, 90, 95, 0.2);
+  border-color: rgba(255, 90, 95, 0.4);
+  color: #ff5a5f;
+}
+
+.success-alert {
+  background-color: rgba(40, 167, 69, 0.2);
+  border-color: rgba(40, 167, 69, 0.4);
+  color: #28a745;
+}
+
+.error-alert .alert-heading, .success-alert .alert-heading {
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+/* Override default Bootstrap form control focus styles */
+.form-control:focus {
+  background-color: #161922 !important;
+  color: #e0e0e0 !important;
+}
