@@ -123,8 +123,17 @@ class MCPClient:
         # Second pass: keep only events for important variables and meaningful operations
         filtered_events = []
         
+        # Track previously seen states by variable name
+        previous_states = {}
+        
         # Track previously seen tree structures for more accurate change detection
         previous_trees = {}
+        
+        # Track array length history for each variable to detect size changes
+        array_length_history = {}
+        
+        # Track last operation type by variable name to detect operation transitions
+        last_operation_by_var = {}
         
         for event in events:
             name = event.get("name", "")
@@ -158,7 +167,48 @@ class MCPClient:
                     previous_trees[name] = content
                     filtered_events.append(event)
                 
-            # Regular handling for non-tree structures
+            # Special handling for arrays to detect length changes and meaningful operations
+            elif structure_type == "arrays" and content and isinstance(content, list):
+                # Determine if this is a meaningful change for an array
+                is_meaningful_change = True
+                current_length = len(content)
+                
+                # Initialize length history if we haven't seen this variable before
+                if name not in array_length_history:
+                    array_length_history[name] = []
+                
+                # Always keep creation, final state, and explicit operations
+                if operation in ["create", "final_state", "append", "insert", "pop", "remove"]:
+                    is_meaningful_change = True
+                # Check for length changes (always keep these)
+                elif array_length_history[name] and current_length != array_length_history[name][-1]:
+                    is_meaningful_change = True
+                # Check for operation type transitions (e.g., from append to something else)
+                elif name in last_operation_by_var and last_operation_by_var[name] != operation:
+                    is_meaningful_change = True
+                # Check if content has changed from previous state
+                elif name in previous_states:
+                    prev_content = previous_states[name]
+                    # Only skip if content is identical and we've already determined it's not otherwise meaningful
+                    if json.dumps(content, sort_keys=True) == prev_content:
+                        # Still consider it meaningful if it's a special operation
+                        if operation not in ["create", "final_state"] and not operation.startswith("add_"):
+                            is_meaningful_change = False
+                
+                # Store the variable's state for future comparison
+                previous_states[name] = json.dumps(content, sort_keys=True)
+                
+                # Update array length history
+                array_length_history[name].append(current_length)
+                
+                # Update last operation type
+                last_operation_by_var[name] = operation
+                
+                # Add to filtered events if it's a meaningful change
+                if is_meaningful_change:
+                    filtered_events.append(event)
+                
+            # Handling for graphs and other structures 
             else:
                 # Generate a unique key for this state to detect duplicates
                 if content:
@@ -167,8 +217,13 @@ class MCPClient:
                         state_key = f"{name}_{hash(json.dumps(content, sort_keys=True))}"
                         
                         # Check if we've seen this exact state before
-                        if hasattr(self, '_seen_states') and state_key in self._seen_states and operation not in ["create", "final_state"]:
-                            continue
+                        if hasattr(self, '_seen_states') and state_key in self._seen_states:
+                            # Keep anyway if it's a creation or final state
+                            if operation in ["create", "final_state"]:
+                                pass  # Continue to add this event
+                            # Skip if it's a duplicate and not a special operation
+                            elif operation not in ["create", "final_state", "append", "insert", "pop", "remove"] and not operation.startswith("add_"):
+                                continue
                         
                         # Initialize _seen_states if it doesn't exist
                         if not hasattr(self, '_seen_states'):
@@ -324,6 +379,7 @@ class MCPClient:
             
             # Process arrays
             array_events = data_structures.get("arrays", [])
+            #print(f"\nArray events: {data_structures.get('arrays', [])}")
             if array_events:
                 # Filter array events before storing them
                 filtered_array_events = self.filter_data_structure_events(array_events, "arrays")
@@ -346,6 +402,7 @@ class MCPClient:
             
             # Process trees
             tree_events = data_structures.get("trees", [])
+            print(f"\nTree events: {data_structures.get('trees', [])}")
             if tree_events:
                 # Filter tree events before storing them
                 filtered_tree_events = self.filter_data_structure_events(tree_events, "trees")
@@ -400,39 +457,50 @@ class MCPClient:
         """Select the best visualization for array data"""
         try:
             # Create a prompt directly without using LangChain's PromptTemplate
+            # First, pre-calculate the key metrics
+            # Create a more robust method to identify array variables
+            unique_array_names = set()
+            for event in array_data:
+                name = event.get("name", "")
+                content = event.get("content")
+                
+                # Check if this is an actual array by verifying content is a list
+                if (isinstance(content, list) and
+                    "serialized" not in name.lower() and
+                    not name.startswith("obj") and
+                    name not in ["node", "result", "return_value", "event_data"]):
+                    unique_array_names.add(name)
+
+            unique_name_count = len(unique_array_names)
+
+            # If there's only one array, calculate its lengths
+            array_lengths = []
+            if unique_name_count == 1:
+                array_name = list(unique_array_names)[0]
+                for event in array_data:
+                    if event.get("name") == array_name and isinstance(event.get("content"), list):
+                        array_lengths.append(len(event.get("content", [])))
+
+            # Determine if lengths change
+            length_changes = len(set(array_lengths)) > 1 if array_lengths else False
+
+            # Create a simple fact-based prompt
             prompt = (
-                "You are an expert in data structure visualization. Your task is to select the most appropriate "
-                "visualization technique for the given array operations data.\n\n"
-                f"Array Data:\n{json.dumps(array_data, indent=2)}\n\n"
-                "Please examine this data carefully to determine:\n"
-                "1. How many unique array variables are present\n"
-                "2. What types of operations are performed (append, insert, indexed_assignment, etc.)\n"
-                "3. Whether the operations focus on specific positions or affect the whole array\n\n"
-                "Then select one of the following visualization options:\n\n"
-                "1. TIMELINE_ARRAY: Shows array state changes over time with side-by-side comparisons.\n"
-                "   Choose this when:\n"
-                "   - Operations affect the whole array (sort, reverse, etc.)\n"
-                "   - There's only one array being modified over time\n"
-                "   - The user wants to see the progressive evolution of an array\n"
-                "   - There are more than 3 operations on the same array\n\n"
-                "2. ELEMENT_FOCUSED: Emphasizes individual element changes with animations and highlights.\n"
-                "   Choose this when:\n"
-                "   - Operations target specific indices (indexed_assignment)\n"
-                "   - There are insert or delete operations at specific positions\n"
-                "   - The pattern of accesses or changes is important to visualize\n"
-                "   - Most changes affect only a few elements at a time\n\n"
-                "3. ARRAY_COMPARISON: Side-by-side view of multiple arrays with relationship indicators.\n"
-                "   Choose this when:\n"
-                "   - Multiple different arrays appear in the data (not just different states of the same array)\n"
-                "   - There are derived arrays (like one array created from another)\n"
-                "   - Operations involve relationship between arrays (copying, transforming)\n"
-                "   - You can see array names like 'original' and 'squared' or similar patterns\n\n"
-                "Respond with a JSON object in this exact format - make sure to use double quotes and avoid escape sequences:\n"
-                "{\n"
-                "  \"selection\": \"1\",  // Just the number (1, 2, or 3) as a string\n"
-                "  \"visualization_type\": \"TIMELINE_ARRAY\",  // The name in CAPS as shown above\n"
-                "  \"rationale\": \"Brief explanation for why this visualization is best\"\n"
-                "}\n"
+                f"EXACT NUMBER OF ARRAYS: {unique_name_count}\n"
+                f"LENGTHS CHANGE: {'Yes' if length_changes else 'No'}\n\n"
+                "MANDATORY DECISION LOGIC:\n\n"
+                f"IF NUMBER OF ARRAYS = {unique_name_count} > 1:\n"
+                "  RETURN: ARRAY_COMPARISON (selection \"3\")\n\n"
+                f"IF NUMBER OF ARRAYS = {unique_name_count} = 1 AND LENGTHS CHANGE = {'Yes' if length_changes else 'No'} = Yes:\n"
+                "  RETURN: TIMELINE_ARRAY (selection \"1\")\n\n"
+                f"IF NUMBER OF ARRAYS = {unique_name_count} = 1 AND LENGTHS CHANGE = {'Yes' if length_changes else 'No'} = No:\n"
+                "  RETURN: ELEMENT_FOCUSED (selection \"2\")\n\n"
+                f"FOR THIS DATA WITH {unique_name_count} ARRAY(S), YOU MUST RETURN:\n"
+                f"{{\n"
+                f"  \"selection\": \"{3 if unique_name_count > 1 else 1 if length_changes else 2}\",\n"
+                f"  \"visualization_type\": \"{('ARRAY_COMPARISON' if unique_name_count > 1 else 'TIMELINE_ARRAY' if length_changes else 'ELEMENT_FOCUSED')}\",\n"
+                f"  \"rationale\": \"{'Multiple arrays detected - using array comparison' if unique_name_count > 1 else 'Single array with changing length - using timeline view' if length_changes else 'Single array with constant length - using element focused view'}\"\n"
+                f"}}\n"
             )
             
             # Send to Mistral AI
@@ -674,39 +742,46 @@ async def main():
     server_script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'mcp-server', 'server.py'))
     if await client.connect_to_server(server_script_path):
         code_snippet = """
-# Array operations
-elements = [5, 10, 15, 20, 25]
-elements[2] = 99  # Update middle element
-elements.append(30)  # Add to end
-elements.insert(0, 1)  # Insert at beginning
-elements.pop(3)  # Remove an element
-elements[1] = elements[1] + elements[2]  # Combined operation
-
-# Tree creation and operations
+# Test removing children and modifying values
 class TreeNode:
     def __init__(self, value):
         self.value = value
-        self.left = None
-        self.right = None
+        self.children = []
+    def add_child(self, child_node):
+        self.children.append(child_node)
 
-root = TreeNode(10)
-root.left = TreeNode(5)
-root.right = TreeNode(15)
-root.left.left = TreeNode(3)
-root.left.right = TreeNode(7)
-root.right.left = TreeNode(12)
+root = TreeNode('R')
+# Add level 1 children
+for i in range(3):
+    root.add_child(TreeNode(f'L1-{i+1}')) # L1-1, L1-2, L1-3
 
-# Graph operations
-graph = {
-    'A': ['B', 'C'],
-    'B': ['D'],
-    'C': ['D', 'E'],
-    'D': [],
-    'E': ['A']
-}
+# Add level 2 children to L1-2
+l1_node_2 = root.children[1]
+for j in range(4):
+    l1_node_2.add_child(TreeNode(f'L2-{j+1}')) # L2-1, L2-2, L2-3, L2-4
 
-# Add a new edge
-graph['D'].append('E')
+# Add level 2 children to L1-3
+l1_node_3 = root.children[2]
+for j in range(2):
+    l1_node_3.add_child(TreeNode(f'L2-{j+5}')) # L2-5, L2-6
+
+
+# --- Modifications ---
+# 1. Remove the middle child of L1-2 (L2-2) by index
+if len(l1_node_2.children) > 1:
+    l1_node_2.children.pop(1) # L2-2 removed, L2-3 becomes index 1
+
+# 2. Modify the value of the now-middle child of L1-2 (originally L2-3)
+if len(l1_node_2.children) > 1:
+    l1_node_2.children[1].value = 'L2-MODIFIED' # L2-3 -> L2-MODIFIED
+
+# 3. Remove the last child of L1-3 (L2-6)
+if len(l1_node_3.children) > 0:
+    l1_node_3.children.pop() # L2-6 removed
+
+# 4. Add a new child to root
+root.add_child(TreeNode('L1-NEW'))
+
 
 
 

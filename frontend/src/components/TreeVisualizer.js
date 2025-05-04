@@ -48,71 +48,87 @@ function TreeVisualizer() {
   };
 
   // Helper function to calculate changes between tree states
-  const calculateChanges = (current, previous) => {
-    if (!previous || !current) {
-      return { added: [], modified: [] };
-    }
-    
+  const calculateChanges = (current, previous, enableDetailedLogging = false) => { // Keep logging flag for testing
+    if (!previous || !current) { return { added: [], modified: [] }; }
     const added = [];
     const modified = [];
-    
-    // Recursive function to compare tree nodes
+
     const compareNodes = (currentNode, previousNode, path = '') => {
-      if (!currentNode && !previousNode) return;
-      
-      // Node was added
+      if (enableDetailedLogging) console.log(`[compareNodes START] Path='${path}', PrevVal=${previousNode?.value}, CurrVal=${currentNode?.value}`);
+      if (!currentNode && !previousNode) { if (enableDetailedLogging) console.log(`[compareNodes END] Path='${path}' - Both null.`); return; }
+
+      // --- Added Block ---
       if (currentNode && !previousNode) {
-        added.push(path);
-        return;
+        if (!added.includes(path)) { // Prevent duplicates just in case
+             added.push(path);
+        }
+        if (enableDetailedLogging) console.log(`[compareNodes ADDED] >>> Pushed to added: '${path}'`);
+
+        // --- Explicitly define children to iterate ---
+        let childrenToRecurse = [];
+        if (currentNode.left) { childrenToRecurse.push({ node: currentNode.left, segment: '.left' }); }
+        if (currentNode.right) { childrenToRecurse.push({ node: currentNode.right, segment: '.right' }); }
+        if (Array.isArray(currentNode.children)) {
+             currentNode.children.forEach((child, index) => {
+                 if (child) { childrenToRecurse.push({ node: child, segment: `.children[${index}]` }); }
+             });
+        }
+
+        // --- Perform recursive calls ---
+        if(enableDetailedLogging && childrenToRecurse.length > 0) console.log(`[compareNodes ADDED] Path='${path}' recursing for ${childrenToRecurse.length} children...`);
+        childrenToRecurse.forEach(childInfo => {
+            const childPath = path + childInfo.segment;
+            compareNodes(childInfo.node, null, childPath); // Pass null for previousNode
+        });
+        // --- End explicit recursion ---
+
+        if (enableDetailedLogging) console.log(`[compareNodes END - Added Branch] Path='${path}'`);
+        return; // Return AFTER processing children
       }
-      
-      // Node still exists but was modified
+
+      // Removed block... (same as before)
+      if (!currentNode && previousNode) { if (enableDetailedLogging) console.log(`[compareNodes END - Removed Branch] Path='${path}'`); return; }
+
+      // Modified block... (same logic as before, ensure recursion checks all possibilities)
       if (currentNode && previousNode) {
-        // Check if value was modified
         if (currentNode.value !== previousNode.value) {
-          modified.push(path);
+          if (!modified.includes(path)) modified.push(path); // Prevent duplicates
+          if (enableDetailedLogging) console.log(`[compareNodes MODIFIED] >>> Pushed modified: '${path}'`);
+        } else {
+          if (enableDetailedLogging) console.log(`[compareNodes CHECK] Path='${path}' - Values same.`);
         }
-        
-        // Compare left children
-        if (currentNode.left || previousNode.left) {
-          compareNodes(currentNode.left, previousNode.left, `${path}.left`);
+
+        // *** Ensure full comparison of children ***
+        // Compare .left
+        compareNodes(currentNode.left, previousNode.left, path + '.left');
+        // Compare .right
+        compareNodes(currentNode.right, previousNode.right, path + '.right');
+        // Compare .children arrays
+        const currentChildren = currentNode.children || [];
+        const previousChildren = previousNode.children || [];
+        const maxLen = Math.max(currentChildren.length, previousChildren.length);
+        for (let i = 0; i < maxLen; i++) {
+            // Handle added/removed children within the loop
+            compareNodes(currentChildren[i], previousChildren[i], path + '.children[' + i + ']');
         }
-        
-        // Compare right children
-        if (currentNode.right || previousNode.right) {
-          compareNodes(currentNode.right, previousNode.right, `${path}.right`);
-        }
-        
-        // Compare non-binary tree children
-        if (Array.isArray(currentNode.children) || Array.isArray(previousNode.children)) {
-          const currentChildren = currentNode.children || [];
-          const previousChildren = previousNode.children || [];
-          
-          // Check for new children
-          if (currentChildren.length > previousChildren.length) {
-            for (let i = previousChildren.length; i < currentChildren.length; i++) {
-              added.push(`${path}.children[${i}]`);
-            }
-          }
-          
-          // Compare existing children
-          const minLength = Math.min(currentChildren.length, previousChildren.length);
-          for (let i = 0; i < minLength; i++) {
-            compareNodes(currentChildren[i], previousChildren[i], `${path}.children[${i}]`);
-          }
-        }
+        // *** End full comparison ***
       }
+      if (enableDetailedLogging) console.log(`[compareNodes END] Path='${path}'`);
     };
-    
-    // Start comparison at root level
+
     compareNodes(current, previous, 'root');
-    
+
+    // Log just before returning
+    if (enableDetailedLogging) console.log(`[CALCCHANGES RETURN] Final Added: ${JSON.stringify(added)}, Mod: ${JSON.stringify(modified)}`);
+
     return { added, modified };
   };
 
   // Process tree data for visualization with complete tree reconstruction
   const treeStates = useMemo(() => {
     if (!data) return [];
+    
+    console.log("Processing tree data:", data);
     
     // Step 1: Filter out internal calls and exits
     const initialFiltered = data.filter(item => 
@@ -167,11 +183,6 @@ function TreeVisualizer() {
       mainTreeName = "root";
     }
     
-    // Step 3: Create a complete tree model that evolves over time
-    // We'll track the state of the tree at each step
-    let currentTreeState = null;
-    const reconstructedStates = [];
-    
     // Function to deep clone a tree object to avoid reference issues
     function cloneTree(node) {
       if (!node) return null;
@@ -215,34 +226,125 @@ function TreeVisualizer() {
       return count;
     }
     
+    // Get the root value from the final state to identify the main tree
+    let mainRootValue = null;
+    if (finalStates.length > 0) {
+      // Find the most complex final state
+      let mostComplexFinalState = finalStates[0];
+      let maxComplexity = countNodesInTree(mostComplexFinalState.content);
+      
+      for (let i = 1; i < finalStates.length; i++) {
+        const complexity = countNodesInTree(finalStates[i].content);
+        if (complexity > maxComplexity) {
+          maxComplexity = complexity;
+          mostComplexFinalState = finalStates[i];
+        }
+      }
+      
+      // Get the root value of the most complex final state
+      if (mostComplexFinalState && mostComplexFinalState.content) {
+        mainRootValue = mostComplexFinalState.content.value;
+        console.log(`Identified main root value as ${mainRootValue}`);
+      }
+    }
+    
+    // If we couldn't find a root value from the final state, get it from the first state
+    if (mainRootValue === null && initialFiltered.length > 0) {
+      // Find the first event with content
+      for (const event of initialFiltered) {
+        if (event.content && event.content.value !== undefined) {
+          mainRootValue = event.content.value;
+          console.log(`Using initial root value as ${mainRootValue}`);
+          break;
+        }
+      }
+    }
+    
     // Process events chronologically
     const sortedEvents = [...initialFiltered].sort((a, b) => a.timestamp - b.timestamp);
     
     // First, find all events for the main tree
     const mainTreeEvents = sortedEvents.filter(evt => evt.name === mainTreeName);
     
-    // Track which updates we've processed
-    const processedTimestamps = new Set();
+    // Track the maximum tree size we've seen so far
+    let maxTreeSize = 0;
+    
+    // We'll build up the main tree progressively, screening out subtree operations
+    let lastKnownMainTree = null;
+    const significantTreeStates = [];
     
     // Process all main tree events in chronological order
-    for (const event of mainTreeEvents) {
-      // Skip if we've already processed a state at this timestamp
-      if (processedTimestamps.has(event.timestamp)) continue;
+    for (let i = 0; i < mainTreeEvents.length; i++) {
+      const event = mainTreeEvents[i];
       
-      // Only consider events with content
+      // Skip events without content
       if (!event.content) continue;
       
-      // If this is our first state or there's a meaningful change, save it
-      if (!currentTreeState || !areTreesStructurallyIdentical(currentTreeState, event.content)) {
-        currentTreeState = cloneTree(event.content);
-        
-        // Create a new reconstructed state from this event
-        reconstructedStates.push({
+      // CRITICAL: Skip events where the root value doesn't match the main tree's root value
+      // This is the key to eliminating the subtree flickering
+      if (mainRootValue !== null && event.content.value !== mainRootValue) {
+        console.log(`Skipping event with different root value: ${event.content.value} vs ${mainRootValue}`);
+        continue;
+      }
+      
+      const currentTreeNodeCount = countNodesInTree(event.content);
+      
+      // For the first event, always include it
+      if (!lastKnownMainTree) {
+        lastKnownMainTree = cloneTree(event.content);
+        significantTreeStates.push({
           ...event,
           content: cloneTree(event.content)
         });
-        
-        processedTimestamps.add(event.timestamp);
+        maxTreeSize = currentTreeNodeCount;
+        continue;
+      }
+      
+      const lastTreeNodeCount = countNodesInTree(lastKnownMainTree);
+      
+      // Check operation type - important for tracking modifications
+      const isModificationOperation = event.operation_details && 
+                                    event.operation_details.code && 
+                                    (event.operation_details.code.includes("value") || 
+                                    event.operation_details.code.includes("= None") || 
+                                    event.operation_details.code.includes("= TreeNode"));
+      
+      // For modifications, always include the event even if node count decreases
+      if (isModificationOperation) {
+        console.log(`Including modification operation: ${event.operation_details.code}`);
+        lastKnownMainTree = cloneTree(event.content);
+        significantTreeStates.push({
+          ...event,
+          content: cloneTree(event.content)
+        });
+        maxTreeSize = Math.max(maxTreeSize, currentTreeNodeCount);
+        continue;
+      }
+      
+      // Main filtering criteria:
+      // 1. Tree must be at least as large as previous state OR
+      // 2. This is the final state (which might be smaller due to removals)
+      const isFinalState = event.operation === "final_state";
+      const isGrowingTree = currentTreeNodeCount >= lastTreeNodeCount;
+      
+      // Never accept a tree that's substantially smaller than the max size we've seen
+      // unless it's a final state or explicit modification
+      if (!isFinalState && currentTreeNodeCount < maxTreeSize * 0.9) {
+        console.log(`Skipping tree that's too small: ${currentTreeNodeCount} vs max ${maxTreeSize}`);
+        continue;
+      }
+      
+      // Include the state if it's growing or it's the final state
+      if (isGrowingTree || isFinalState) {
+        // Check for structural differences to avoid duplicates
+        if (!areTreesStructurallyIdentical(lastKnownMainTree, event.content)) {
+          lastKnownMainTree = cloneTree(event.content);
+          significantTreeStates.push({
+            ...event,
+            content: cloneTree(event.content)
+          });
+          maxTreeSize = Math.max(maxTreeSize, currentTreeNodeCount);
+        }
       }
     }
     
@@ -286,10 +388,10 @@ function TreeVisualizer() {
       return true;
     }
     
-    console.log(`Reconstructed ${reconstructedStates.length} unique tree states`);
+    console.log(`Reconstructed ${significantTreeStates.length} meaningful tree states`);
     
     // Step 4: Calculate changes between consecutive states
-    return reconstructedStates.map((treeData, index) => {
+    return significantTreeStates.map((treeData, index) => {
       // Set a consistent name for the tree states
       const stateWithConsistentName = {
         ...treeData,
@@ -301,7 +403,7 @@ function TreeVisualizer() {
       if (index > 0) {
         stateWithConsistentName.changes = calculateChanges(
           treeData.content,
-          reconstructedStates[index - 1].content
+          significantTreeStates[index - 1].content
         );
       } else {
         // For the first state, everything is considered "added"
@@ -348,6 +450,7 @@ function TreeVisualizer() {
     }
   }, [data]);
 
+  
   // Set up polling for data updates and initial load
   useEffect(() => {
     fetchData();
@@ -520,7 +623,10 @@ function TreeVisualizer() {
     const buildHierarchy = (node) => {
       if (!node) return null;
       
-      const result = { name: node.value.toString() };
+      const result = { 
+        name: node.value.toString(),
+        originalNode: node  // Store reference to original node
+      };
       
       // Handle both types of tree structures
       const children = [];
@@ -573,7 +679,7 @@ function TreeVisualizer() {
     treeLayout(root);
     
     // Track nodes that first appear in this step
-    const getFirstAppearanceStep = (path) => {
+    /*const getFirstAppearanceStep = (path) => {
       for (let i = 0; i <= currentStep; i++) {
         if (i < treeStates.length && 
             treeStates[i].changes && 
@@ -583,7 +689,7 @@ function TreeVisualizer() {
         }
       }
       return -1; // Not found or was present from beginning
-    };
+    };*/
     
     // Add links between nodes
     treeGroup.selectAll(".link")
@@ -603,42 +709,104 @@ function TreeVisualizer() {
       .delay((d, i) => i * 50)
       .attr("opacity", 1);
     
-    // Helper function to get a node's path
-    function getNodePath(d) {
-      if (d.depth === 0) return 'root';
-      
-      // Start with root
-      let path = 'root';
-      
-      // Path from node to root
+    // Helper function to get a node's path (REVISED AGAIN - FINAL)
+    function getNodePath(d) { // d is a D3 hierarchy node
+      // Root node is handled separately
+      if (d.depth === 0) {
+          // Assuming 'root' is consistently used as the base path identifier
+          // even if the actual root variable name in the code differs.
+          // This matches the starting path in calculateChanges.
+          return 'root';
+      }
+
       const pathParts = [];
-      
-      // Current node and its parent
-      let current = d;
-      let parent = current.parent;
-      
-      // Traverse up the tree until we reach the root
+      let current = d; // The current D3 node
+      let parent = d.parent; // The parent D3 node
+
       while (parent) {
-        // Find which child of the parent this node is
-        const childIndex = parent.children.findIndex(c => c === current);
-        
-        // For binary tree, use left/right notation
-        if (parent.children.length <= 2) {
-          pathParts.unshift(childIndex === 0 ? 'left' : 'right');
-        } else {
-          // For non-binary tree, use children array notation
-          pathParts.unshift(`children[${childIndex}]`);
+        // Get the original data objects linked to the D3 nodes
+        const originalParentData = parent.data.originalNode;
+        const originalCurrentData = current.data.originalNode;
+
+        // Ensure we have the original data to work with
+        if (!originalParentData || !originalCurrentData) {
+           console.warn("getNodePath: Missing originalNode data for parent or current D3 node:", parent, current);
+           // Fallback using D3 index if original data is missing
+           const index = parent.children ? parent.children.findIndex(c => c === current) : -1;
+           pathParts.unshift(index !== -1 ? `unknown_index[${index}]` : 'unknown_parent_child');
+           current = parent;
+           parent = current.parent;
+           continue; // Move to the next level up
         }
-        
-        // Move up the tree
+
+        let segmentFound = false;
+
+        // 1. Check 'left' child relationship (Prioritize Object Identity)
+        if (originalParentData.left === originalCurrentData) {
+          pathParts.unshift('left');
+          segmentFound = true;
+        }
+        // 2. Check 'right' child relationship (Prioritize Object Identity)
+        else if (originalParentData.right === originalCurrentData) {
+          pathParts.unshift('right');
+          segmentFound = true;
+        }
+        // 3. Fallback: Check 'left' child relationship based on VALUE
+        else if (originalParentData.left && originalParentData.left.value === originalCurrentData.value) {
+           // Check if right child *also* has the same value to resolve ambiguity
+           if (!originalParentData.right || originalParentData.right.value !== originalCurrentData.value) {
+              pathParts.unshift('left');
+              segmentFound = true;
+           }
+           // If both left and right have the same value, we *must* use index fallback later
+        }
+        // 4. Fallback: Check 'right' child relationship based on VALUE
+        else if (originalParentData.right && originalParentData.right.value === originalCurrentData.value) {
+           // We already checked if left also matched in the previous step
+           pathParts.unshift('right');
+           segmentFound = true;
+        }
+
+        // 5. Check 'children' array relationship if not found via left/right
+        if (!segmentFound && Array.isArray(originalParentData.children)) {
+          // Try finding by object identity first
+          let originalIndex = originalParentData.children.findIndex(child => child === originalCurrentData);
+          // Fallback to value if identity fails (be cautious of duplicates)
+          if (originalIndex === -1) {
+              originalIndex = originalParentData.children.findIndex(child => child && child.value === originalCurrentData.value);
+              // Potential improvement: If multiple matches by value, maybe use D3 index? For now, take first match.
+          }
+
+          if (originalIndex !== -1) {
+            pathParts.unshift(`children[${originalIndex}]`);
+            segmentFound = true;
+          }
+        }
+
+        // 6. Absolute Fallback: Use D3 hierarchy index (if nothing else worked)
+        if (!segmentFound) {
+            const index = parent.children ? parent.children.findIndex(c => c === current) : -1;
+            console.warn(`getNodePath: Using D3 index fallback for node ${originalCurrentData.value}. Parent:`, originalParentData);
+            // Try to guess format based on original parent structure
+            if (originalParentData.left !== undefined || originalParentData.right !== undefined) {
+                 pathParts.unshift(index === 0 ? 'left' : 'right'); // Guess binary based on keys
+            } else {
+                 pathParts.unshift(index !== -1 ? `children[${index}]` : 'unknown_fallback'); // Guess n-ary
+            }
+        }
+
+        // Move up the hierarchy
         current = parent;
         parent = current.parent;
       }
-      
-      // Build the final path
-      return path + (pathParts.length > 0 ? '.' + pathParts.join('.') : '');
+
+      // Construct the full path string
+      let path = 'root';
+      if (pathParts.length > 0) {
+        path += '.' + pathParts.join('.');
+      }
+      return path;
     }
-    
     const nodeRadius = 20;
     
     // Add nodes
@@ -690,24 +858,35 @@ function TreeVisualizer() {
     // Add node circles with appropriate classes
     nodes.append("circle")
       .attr("r", nodeRadius)
+      // ********************************************************
+      // * START MODIFICATION - Replace class assignment logic  *
+      // ********************************************************
       .attr("class", d => {
-        const path = getNodePath(d);
-        const firstAppearanceStep = getFirstAppearanceStep(path);
-        
-        // If this node first appeared in the current step, mark as added
-        if (firstAppearanceStep === currentStep) {
-          return "node-added";
+        const path = getNodePath(d); // Get the path for the current node
+
+        // Ensure changes object exists before trying to access it
+        const changes = currentState.changes || { added: [], modified: [] };
+
+        // Check if this path was ADDED in this specific step's changes
+        // Use optional chaining (?.) just in case `changes.added` is undefined
+        if (changes.added?.includes(path)) {
+          return "node-added"; // Apply GREEN
         }
-        
-        // If it was modified in this step
-        if (currentState.changes.modified.includes(path)) {
-          return "node-modified";
+
+        // ELSE, check if this path was MODIFIED in this specific step's changes
+        // Use optional chaining (?.) just in case `changes.modified` is undefined
+        if (changes.modified?.includes(path)) {
+          return "node-modified"; // Apply YELLOW
         }
-        
-        return "node-normal";
+
+        // Otherwise, it's a standard node in this step's structure
+        return "node-normal"; // Apply BLUE
       })
+      // ******************************************************
+      // * END MODIFICATION - End replaced class logic        *
+      // ******************************************************
       .attr("stroke", "#303030")
-      .attr("stroke-width", 1.5);
+      .attr("stroke-width", 1.5)
     
     // Add node labels - CENTERED IN CIRCLES
     nodes.append("text")
@@ -732,12 +911,11 @@ function TreeVisualizer() {
       .attr("fill", "#e0e0e0")
       .text("Legend");
     
-    // Legend items
-    const legendItems = [
-      { color: "node-normal", label: "Standard Nodes" },
-      { color: "node-modified", label: "Modified Nodes" },
-      { color: "node-added", label: "Newly Added Nodes" }
-    ];
+      const legendItems = [
+        { color: "node-normal", label: "Standard Nodes" },
+        { color: "node-modified", label: "Modified Nodes" },
+        { color: "node-added", label: "New Path Nodes" }
+      ];
     
     // Add legend items vertically
     legendItems.forEach((item, index) => {
@@ -763,11 +941,24 @@ function TreeVisualizer() {
     
   // D3 Radial Tree Visualization
   useEffect(() => {
-    if (!treeStates.length || !radialRef.current || 
-        visualizationType !== "RADIAL_TREE") return;
-    
+    // Check dependencies and refs
+    if (!treeStates || treeStates.length === 0 || !radialRef.current ||
+      visualizationType !== "RADIAL_TREE") {
+       // Clear previous viz if conditions not met or states are empty
+       d3.select(radialRef.current).selectAll("*").remove();
+       return;
+    }
+    const stateForThisStep = treeStates[currentStep];
+
+    if (!stateForThisStep || !stateForThisStep.content) {
+      console.warn(`No valid state data found for step ${currentStep}`);
+      d3.select(radialRef.current).selectAll("*").remove();
+      return;
+  }
     const container = d3.select(radialRef.current);
     container.selectAll("*").remove(); // Clear previous visualization
+
+    console.log(`Rendering radial tree step ${currentStep + 1}/${treeStates.length}`, stateForThisStep);
     
     const currentState = treeStates[currentStep];
     if (!currentState || !currentState.content) return;
@@ -870,62 +1061,104 @@ function TreeVisualizer() {
     // Helper function for radial coordinates
     const radialPoint = (x, y) => [(y = +y) * Math.cos(x -= Math.PI / 2), y * Math.sin(x)];
     
-    // Create a normalized map of node paths
-    const nodePaths = new Map();
     
-    // Helper function to get a node's path
-    function getNodePath(d) {
-      // For the root of the visualization
+    
+    // Helper function to get a node's path (REVISED AGAIN - FINAL - Unified Version)
+    function getNodePath(d) { // d is a D3 hierarchy node
       if (d.depth === 0) {
-        // Special handling - in our data, the root node name might not be "root"
-        return currentState.name;
+          return 'root';
       }
-      
-      // Start with the mainTreeName as the base
-      let path = currentState.name;
-      
-      // Handle children arrays - build path using array notation
-      if (d.data.originalNode && 'children' in d.data.originalNode) {
-        // Get ancestors to build proper path from root
-        const ancestors = d.ancestors().reverse();
-        
-        // Start from index 1 to skip the root node itself
-        for (let i = 1; i < ancestors.length; i++) {
-          const parent = ancestors[i-1];
-          const current = ancestors[i];
-          
-          // Find index of current node in parent's children
-          const childIndex = parent.children.indexOf(current);
-          
-          // Always use children array notation for non-binary trees
-          path += `.children[${childIndex}]`;
+
+      const pathParts = [];
+      let current = d;
+      let parent = d.parent;
+
+      while (parent) {
+        const originalParentData = parent.data.originalNode;
+        const originalCurrentData = current.data.originalNode;
+
+        if (!originalParentData || !originalCurrentData) {
+           console.warn("getNodePath: Missing originalNode data for parent or current D3 node:", parent, current);
+           const index = parent.children ? parent.children.findIndex(c => c === current) : -1;
+           pathParts.unshift(index !== -1 ? `unknown_index[${index}]` : 'unknown_parent_child');
+           current = parent;
+           parent = current.parent;
+           continue;
         }
-      } 
-      // Handle binary trees with left/right properties
-      else {
-        const ancestors = d.ancestors().reverse();
-        
-        // Start from index 1 to skip the root node itself
-        for (let i = 1; i < ancestors.length; i++) {
-          const parent = ancestors[i-1];
-          const current = ancestors[i];
-          
-          // Find index of current node in parent's children
-          const childIndex = parent.children.indexOf(current);
-          
-          // Use left/right for binary trees
-          path += childIndex === 0 ? '.left' : '.right';
+
+        let segmentFound = false;
+
+        // 1. Check 'left' child relationship (Prioritize Object Identity)
+        if (originalParentData.left === originalCurrentData) {
+          pathParts.unshift('left');
+          segmentFound = true;
         }
+        // 2. Check 'right' child relationship (Prioritize Object Identity)
+        else if (originalParentData.right === originalCurrentData) {
+          pathParts.unshift('right');
+          segmentFound = true;
+        }
+        // 3. Fallback: Check 'left' child relationship based on VALUE (with ambiguity check)
+        else if (originalParentData.left && originalParentData.left.value === originalCurrentData.value) {
+           if (!originalParentData.right || originalParentData.right.value !== originalCurrentData.value) {
+              pathParts.unshift('left');
+              segmentFound = true;
+           }
+        }
+        // 4. Fallback: Check 'right' child relationship based on VALUE (with ambiguity check)
+        else if (originalParentData.right && originalParentData.right.value === originalCurrentData.value) {
+           if (!originalParentData.left || originalParentData.left.value !== originalCurrentData.value) {
+              pathParts.unshift('right');
+              segmentFound = true;
+           }
+        }
+
+        // 5. Check 'children' array relationship if not found via left/right
+        if (!segmentFound && Array.isArray(originalParentData.children)) {
+          let originalIndex = originalParentData.children.findIndex(child => child === originalCurrentData);
+          if (originalIndex === -1) {
+              originalIndex = originalParentData.children.findIndex(child => child && child.value === originalCurrentData.value);
+          }
+          if (originalIndex !== -1) {
+            pathParts.unshift(`children[${originalIndex}]`);
+            segmentFound = true;
+          }
+        }
+
+        // 6. Absolute Fallback: Use D3 hierarchy index
+        if (!segmentFound) {
+            const index = parent.children ? parent.children.findIndex(c => c === current) : -1;
+            console.warn(`getNodePath: Using D3 index fallback for node ${originalCurrentData.value}. Parent:`, originalParentData);
+            if (originalParentData.left !== undefined || originalParentData.right !== undefined) {
+                 pathParts.unshift(index === 0 ? 'left' : 'right');
+            } else {
+                 pathParts.unshift(index !== -1 ? `children[${index}]` : 'unknown_fallback');
+            }
+            segmentFound = true; // Mark as found to prevent issues in rare fallbacks
+        }
+
+        current = parent;
+        parent = current.parent;
       }
-      
+
+      let path = 'root';
+      if (pathParts.length > 0) {
+        path += '.' + pathParts.join('.');
+      }
+      // Remove potential redundant 'root' prefix if currentState.name is used elsewhere
+      // This normalizePath might need adjustment based on how paths are stored in 'changes'
+      // Let's ensure consistency by always using 'root.' prefix from calculateChanges side.
+      // For now, returning path starting with 'root.' generated here.
       return path;
     }
+
     
     // Pre-compute all node paths and store them in the map
+    /*const nodePaths = new Map();
     root.descendants().forEach(d => {
       const path = getNodePath(d);
       nodePaths.set(d, path);
-    });
+    });*/
     
     // Helper to normalize path for comparison
     function normalizePath(path) {
@@ -1021,27 +1254,48 @@ function TreeVisualizer() {
     // Add node circles with appropriate classes
     nodes.append("circle")
       .attr("r", nodeRadius)
-      .attr("class", d => {
-        if (!hasChanges) return "node-normal"; // Default when no changes available
-        
-        const path = nodePaths.get(d);
-        const normalizedPath = normalizePath(path);
-        
-        // If this is the exact node that was added in this step
-        if (addedPath && normalizedPath === addedPath) {
-          return "node-added";
+      // --- START CORRECTED CLASS LOGIC ---
+      // Replace this block entirely
+      .attr("class", d => { // d is a D3 hierarchy node
+        const path = getNodePath(d); // Use the robust, unified version
+
+        // *** CRITICAL FIX: Use the changes from the CORRECT step's state object ***
+        const changes = stateForThisStep.changes || { added: [], modified: [] };
+        const addedList = changes.added || [];
+        const modifiedList = changes.modified || [];
+        const currentPath = path;
+
+        let isAdded = false;
+        // Using explicit loop as it worked for debugging, .includes() should also work now
+        for (let i = 0; i < addedList.length; i++) {
+            if (addedList[i] === currentPath) { isAdded = true; break; }
         }
-        
-        // Check if this node was modified
-        const isModified = currentState.changes.modified && 
-          currentState.changes.modified.some(modPath => 
-            normalizePath(modPath) === normalizedPath
-          );
-        
-        if (isModified) return "node-modified";
-        
-        return "node-normal";
-      })
+
+        let isModified = false;
+        if (!isAdded) {
+            for (let i = 0; i < modifiedList.length; i++) {
+                if (modifiedList[i] === currentPath) { isModified = true; break; }
+            }
+        }
+
+        let nodeClass = "node-normal";
+        if (isAdded) {
+            nodeClass = "node-added";
+        } else if (isModified) {
+            nodeClass = "node-modified";
+        }
+
+        // Keep the logging for Node 121 temporarily to confirm the fix
+        if (currentPath === 'root.children[1].children[1].children[0]') {
+             console.warn(`[FINAL CHECK] Node 121 Path='${currentPath}'`);
+             console.warn(`  >>> Using addedList from stateForThisStep:`, JSON.stringify(addedList));
+             console.warn(`  >>> Final isAdded result:`, isAdded);
+             console.warn(`  >>> Final Class: ${nodeClass}`);
+        }
+
+        return nodeClass;
+    })
+      // --- END CORRECTED CLASS LOGIC ---
       .attr("stroke", "#303030")
       .attr("stroke-width", 1.5);
     
