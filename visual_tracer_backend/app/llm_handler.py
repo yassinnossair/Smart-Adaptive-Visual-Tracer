@@ -1,5 +1,3 @@
-# visual_tracer_backend/app/llm_handler.py
-
 import os
 import json
 import re
@@ -13,8 +11,6 @@ from mistralai.models.chat_completion import ChatMessage
 MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY")
 if not MISTRAL_API_KEY:
     print("CRITICAL ERROR: Mistral API key is not set in environment for llm_handler.py. Ensure .env is loaded.")
-    # In a real app, you might raise an exception or have a fallback.
-    # For now, this print statement will indicate a setup issue.
     mistral_client = None
 else:
     try:
@@ -115,7 +111,7 @@ def get_visualization_for_arrays(array_data: list) -> dict:
                     array_lengths.append(len(event.get("content", [])))
         length_changes = len(set(array_lengths)) > 1 if array_lengths else False
 
-        # This prompt is an exact copy from client.py's select_visualization_for_arrays
+        
         prompt = (
             f"EXACT NUMBER OF ARRAYS: {unique_name_count}\n"
             f"LENGTHS CHANGE: {'Yes' if length_changes else 'No'}\n\n"
@@ -174,8 +170,7 @@ def get_visualization_for_trees(tree_data: list) -> dict:
         }
 
     try:
-        # --- Prompt from original client.py ---
-        # This prompt is an exact copy from client.py's select_visualization_for_trees
+
         prompt = (
             "You are an expert in data structure visualization. Your task is to select the most appropriate "
             "visualization technique for the given tree operations data.\n\n"
@@ -250,8 +245,6 @@ def get_visualization_for_graphs(graph_data: list) -> dict:
         }
 
     try:
-        # --- Prompt from original client.py ---
-        # This prompt is an exact copy from client.py's select_visualization_for_graphs
         prompt = (
             "You are an expert in data structure visualization. Your task is to select the most appropriate visualization technique for the given graph operations data.\n\n"
             f"Graph Data:\n{json.dumps(graph_data, indent=2)}\n\n" # Ensure graph_data is serializable
@@ -314,82 +307,5 @@ def get_visualization_for_graphs(graph_data: list) -> dict:
             "rationale": f"Default selection due to error: {str(e)}"
         }
 
-if __name__ == '__main__':
-    # This block is for testing the llm_handler.py module directly.
-    # You'll need to have your MISTRAL_API_KEY in the .env file in the
-    # visual_tracer_backend directory for this to work.
 
-    print("Testing LLM Handler directly...")
-
-    # Sample filtered data (replace with actual filtered data for more realistic tests)
-    sample_array_data_single_no_change = [
-        {"name": "arr1", "content": [1, 2, 3], "operation": "create_array"},
-        {"name": "arr1", "content": [1, 2, 3], "operation": "update"}
-    ]
-    sample_array_data_single_change = [
-        {"name": "arr1", "content": [1, 2], "operation": "create_array"},
-        {"name": "arr1", "content": [1, 2, 3, 4], "operation": "append"}
-    ]
-    sample_array_data_multiple = [
-        {"name": "arr1", "content": [1, 2], "operation": "create_array"},
-        {"name": "arr2", "content": [10, 20], "operation": "create_array"}
-    ]
-
-    sample_tree_data_binary = [
-        {"name": "root", "content": {"value": "A", "left": {"value": "B"}, "right": {"value": "C"}}}
-    ]
-    sample_tree_data_nary = [
-        {"name": "root", "content": {"value": "X", "children": [{"value": "Y"}, {"value": "Z"}]}}
-    ]
-
-    sample_graph_data_sparse = [ # Density = 2 / (3*2) = 0.33 -> Should be ADJACENCY by density
-                                  # Max outgoing = 1 -> Not ADJACENCY by outgoing
-                                  # So, this might be tricky for the LLM if rules conflict or are interpreted strictly
-        {"name": "g", "content": {"A": ["B"], "B": ["C"], "C": []}}
-    ]
-    sample_graph_data_dense = [ # Density = 6 / (4*3) = 0.5 -> ADJACENCY
-        {"name": "g", "content": {"A": ["B", "C", "D"], "B": ["A", "C"], "C": ["D"], "D": []}}
-    ]
-    sample_graph_data_high_outgoing = [ # Max outgoing for A is 4 -> ADJACENCY
-        {"name": "g", "content": {"A": ["B", "C", "D", "E"], "B": [], "C": [], "D": [], "E": []}}
-    ]
-
-
-    if mistral_client:
-        print("\n--- Testing Array Visualization Selection ---")
-        print("Test 1: Single array, no length change")
-        array_viz1 = get_visualization_for_arrays(sample_array_data_single_no_change)
-        print(f"Result 1: {array_viz1}")
-
-        print("\nTest 2: Single array, length changes")
-        array_viz2 = get_visualization_for_arrays(sample_array_data_single_change)
-        print(f"Result 2: {array_viz2}")
-
-        print("\nTest 3: Multiple arrays")
-        array_viz3 = get_visualization_for_arrays(sample_array_data_multiple)
-        print(f"Result 3: {array_viz3}")
-
-        print("\n--- Testing Tree Visualization Selection ---")
-        print("Test 4: Binary tree structure")
-        tree_viz1 = get_visualization_for_trees(sample_tree_data_binary)
-        print(f"Result 4: {tree_viz1}")
-
-        print("\nTest 5: N-ary tree structure (children array)")
-        tree_viz2 = get_visualization_for_trees(sample_tree_data_nary)
-        print(f"Result 5: {tree_viz2}")
-
-        print("\n--- Testing Graph Visualization Selection ---")
-        print("Test 6: Sparse graph (but density rule might trigger matrix)")
-        graph_viz1 = get_visualization_for_graphs(sample_graph_data_sparse)
-        print(f"Result 6: {graph_viz1}")
-        
-        print("\nTest 7: Dense graph")
-        graph_viz2 = get_visualization_for_graphs(sample_graph_data_dense)
-        print(f"Result 7: {graph_viz2}")
-
-        print("\nTest 8: High outgoing connections")
-        graph_viz3 = get_visualization_for_graphs(sample_graph_data_high_outgoing)
-        print(f"Result 8: {graph_viz3}")
-    else:
-        print("LLM Handler: Mistral client failed to initialize. Skipping direct tests.")
 

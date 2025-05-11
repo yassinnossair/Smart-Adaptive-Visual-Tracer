@@ -1,16 +1,11 @@
-# visual_tracer_backend/app/tracer.py
-
 import sys
 import time
 import json
 import traceback
 import linecache
-# inspect and ast are not directly used by the core logic of server.py,
-# but re and copy are.
 import re
 import copy
 
-# This set can remain as a module-level constant as it's read-only during tracing.
 IGNORED_VARIABLES = {
     # Special Python variables
     '__builtins__', '__name__', '__file__', '__doc__', '__package__',
@@ -384,51 +379,6 @@ def perform_code_analysis(code_snippet: str) -> str:
             "error": {"message": "Failed to serialize results", "details": str(e_json)}
         }, default=str, indent=2)
 
-if __name__ == '__main__':
-    # Example usage for testing this module directly
-    sample_code = """
-my_array = [1, 2, 3]
-my_array.append(4)
-my_array[0] = 100
 
-class TreeNode:
-    def __init__(self, value):
-        self.value = value
-        self.left = None
-        self.right = None
 
-root = TreeNode(10)
-root.left = TreeNode(5)
-root.left.value = 50
 
-my_graph = {'A': ['B'], 'B': []}
-my_graph['A'].append('C')
-my_graph['C'] = []
-    """
-    print("Running direct trace analysis...")
-    analysis_json = perform_code_analysis(sample_code)
-    print("\nAnalysis Result JSON:")
-    print(analysis_json)
-
-    # Test with a slightly more complex tree
-    tree_code = """
-class TreeNode:
-    def __init__(self, value):
-        self.value = value
-        self.children = []
-
-    def add_child(self, child_node):
-        self.children.append(child_node)
-
-root = TreeNode("Root")
-c1 = TreeNode("C1")
-c2 = TreeNode("C2")
-root.add_child(c1)
-root.add_child(c2)
-c1.add_child(TreeNode("C1.1"))
-c2.value = "C2_MODIFIED"
-"""
-    print("\nRunning tree analysis...")
-    tree_analysis_json = perform_code_analysis(tree_code)
-    print("\nTree Analysis Result JSON:")
-    print(tree_analysis_json)

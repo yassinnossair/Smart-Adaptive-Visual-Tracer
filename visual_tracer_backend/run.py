@@ -1,5 +1,3 @@
-# visual_tracer_backend/run.py
-
 import os
 from app import create_app # Import the application factory
 

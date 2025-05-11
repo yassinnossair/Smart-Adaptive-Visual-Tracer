@@ -1,9 +1,6 @@
-# visual_tracer_backend/app/data_processor.py
-
 import json
 import copy
-# re is not used in the filter_data_structure_events or _is_identical_tree_state methods
-# from the provided client.py, so it's not imported here. If it were used, we'd add it.
+
 
 def _is_identical_tree_state(tree1, tree2):
     """
@@ -272,64 +269,4 @@ def filter_data_structure_events(events: list, structure_type: str) -> list:
     return filtered_events
 
 
-if __name__ == '__main__':
-    # Example usage for testing this module directly
-    print("Testing data_processor.py...")
 
-    # Sample Array Events (simplified from what tracer might produce)
-    sample_array_events = [
-        {"name": "my_arr", "operation": "create_array", "content": [1, 2], "timestamp": 1.0, "operation_details": {"code": "my_arr = [1, 2]"}},
-        {"name": "my_arr", "operation": "update", "content": [1, 2], "timestamp": 1.1, "operation_details": {"code": "x = my_arr[0]"}}, # No actual change
-        {"name": "my_arr", "operation": "append", "content": [1, 2, 3], "timestamp": 1.2, "operation_details": {"code": "my_arr.append(3)"}},
-        {"name": "other_arr", "operation": "create_array", "content": [10], "timestamp": 1.3, "operation_details": {"code": "other_arr = [10]"}},
-        {"name": "my_arr", "operation": "final_state", "content": [1, 2, 3], "timestamp": 1.4, "operation_details": {"code": "final state"}},
-    ]
-    filtered_arrays = filter_data_structure_events(sample_array_events, "arrays")
-    print(f"\nFiltered Array Events ({len(filtered_arrays)}):")
-    for event in filtered_arrays:
-        print(f"  {event['name']} - {event['operation']} - {event['content']} @ {event['timestamp']}")
-
-    # Sample Tree Events
-    sample_tree_events = [
-        {"name": "root", "operation": "assign_node", "content": {"value": "A"}, "timestamp": 2.0},
-        {"name": "root", "operation": "assign_node", "content": {"value": "A"}, "timestamp": 2.1}, # Identical
-        {"name": "root", "operation": "set_left_child", "content": {"value": "A", "left": {"value": "B"}}, "timestamp": 2.2},
-        {"name": "node", "operation": "update_node_value", "content": {"value": "B_mod"}, "timestamp": 2.3}, # Local var, but content changes
-        {"name": "root", "operation": "set_right_child", "content": {"value": "A", "left": {"value": "B_mod"}, "right": {"value": "C"}}, "timestamp": 2.4},
-        {"name": "root", "operation": "final_state", "content": {"value": "A", "left": {"value": "B_mod"}, "right": {"value": "C"}}, "timestamp": 2.5},
-    ]
-    filtered_trees = filter_data_structure_events(sample_tree_events, "trees")
-    print(f"\nFiltered Tree Events ({len(filtered_trees)}):")
-    for event in filtered_trees:
-        print(f"  {event['name']} - {event['operation']} - Val: {event['content'].get('value')} @ {event['timestamp']}")
-
-    # Sample Graph Events
-    sample_graph_events = [
-        {"name": "my_graph", "operation": "create_graph", "content": {"X": ["Y"]}, "timestamp": 3.0},
-        {"name": "my_graph", "operation": "update", "content": {"X": ["Y"]}, "timestamp": 3.1}, # Identical
-        {"name": "my_graph", "operation": "add_edge", "content": {"X": ["Y", "Z"]}, "timestamp": 3.2},
-        {"name": "my_graph", "operation": "final_state", "content": {"X": ["Y", "Z"]}, "timestamp": 3.3},
-    ]
-    filtered_graphs = filter_data_structure_events(sample_graph_events, "graphs")
-    print(f"\nFiltered Graph Events ({len(filtered_graphs)}):")
-    for event in filtered_graphs:
-        print(f"  {event['name']} - {event['operation']} - {event['content']} @ {event['timestamp']}")
-
-    # Test _is_identical_tree_state
-    tree_a = {"value": 1, "left": {"value": 2}, "right": {"value": 3}}
-    tree_b = {"value": 1, "left": {"value": 2}, "right": {"value": 3}}
-    tree_c = {"value": 1, "left": {"value": 20}, "right": {"value": 3}}
-    tree_d = {"value": 1, "left": {"value": 2}} # Missing right
-    tree_e = {"value": 1, "children": [{"value": 2}, {"value": 3}]}
-    tree_f = {"value": 1, "children": [{"value": 2}, {"value": 3}]}
-    tree_g = {"value": 1, "children": [{"value": 20}, {"value": 3}]}
-
-    print("\nTree Identity Tests:")
-    print(f"A == B: {_is_identical_tree_state(tree_a, tree_b)}") # True
-    print(f"A == C: {_is_identical_tree_state(tree_a, tree_c)}") # False
-    print(f"A == D: {_is_identical_tree_state(tree_a, tree_d)}") # False
-    print(f"D == A: {_is_identical_tree_state(tree_d, tree_a)}") # False
-    print(f"E == F: {_is_identical_tree_state(tree_e, tree_f)}") # True
-    print(f"E == G: {_is_identical_tree_state(tree_e, tree_g)}") # False
-    print(f"A == None: {_is_identical_tree_state(tree_a, None)}") # False
-    print(f"None == None: {_is_identical_tree_state(None, None)}") # True

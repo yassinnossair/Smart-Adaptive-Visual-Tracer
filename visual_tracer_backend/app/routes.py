@@ -1,5 +1,3 @@
-# visual_tracer_backend/app/routes.py
-
 import os
 import json
 import traceback
