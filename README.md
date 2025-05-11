@@ -123,32 +123,6 @@ Once both the backend server (`visual_tracer_backend`) and the frontend developm
 6.  Hover over elements in the D3.js visualizations for additional information and tooltips.
 7.  Observe the "Operation Details" section below the visualization to understand the specific line of code responsible for each visual change in the data structure.
 
-## Project Components in Detail
-
-### Backend Server (`visual_tracer_backend/app/`)
-The backend is a Flask application structured for clarity and maintainability:
--   **`__init__.py`**: Initializes the Flask application using an app factory pattern. It sets up configurations like CORS and loads environment variables from the `.env` file.
--   **`tracer.py`**: Contains the core `sys.settrace` logic. This module is responsible for hooking into Python code execution, identifying arrays, trees, and graphs, and meticulously tracking their state changes and operations in real-time.
--   **`data_processor.py`**: Takes the raw execution trace data from `tracer.py` and filters it. This crucial step selects only the significant events and prepares the data in a clean format suitable for visualization and further analysis by the LLM.
--   **`llm_handler.py`**: Manages all interactions with the Mistral AI API. It receives processed data structure traces and sends carefully crafted prompts to the LLM to get recommendations for the most suitable visualization types for each data structure.
--   **`routes.py`**: Defines all the RESTful API endpoints that the React frontend consumes (e.g., `/api/analyze`, `/api/execution_data`). It orchestrates the calls to the tracer, data processor, and LLM handler. It also serves the static files for the React frontend.
--   **`run.py`** (located in the parent `visual_tracer_backend/` directory): This is the main script used to start the Flask development server.
-
-### React Frontend (`frontend/src/components/`)
-The frontend is built with React and uses D3.js for dynamic visualizations. Key components include:
--   **`App.js`**: The main application component that structures the layout (header, code input column, visualization column, footer) and manages overall state like analysis completion and active visualization tab.
--   **`CodeInput.js`**: Provides the text area for users to input Python code and handles the submission to the backend API, including loading states and error/success messages.
--   **Visualizer Components**:
-    -   **`ArrayVisualizer.js`**: Renders array data structures. It supports multiple views like a timeline of changes, an element-focused view highlighting modifications, and a comparison view for multiple arrays.
-    -   **`TreeVisualizer.js`**: Displays tree structures. It offers both traditional hierarchical layouts and radial layouts for different perspectives on tree data.
-    -   **`GraphVisualizer.js`**: Represents graph data. It can show graphs using a force-directed layout (good for understanding structure and relationships) or as an adjacency matrix (useful for dense graphs). It also includes a graph statistics display.
-
-Each visualizer component is designed to be interactive, allowing users to:
--   Control playback of the execution trace (play, pause, step forward/backward, speed adjustment via slider and buttons).
--   See changes highlighted with distinct color-coding and animations.
--   Hover over elements in the D3.js visualizations to get tooltips with detailed information.
--   View the specific line of code ("Operation Details") that caused each visual change in the data structure.
-
 ## License
 
 This project is part of a bachelor thesis and is available for educational purposes.
