@@ -1,6 +1,6 @@
 # Smart Adaptive Visual Tracer
 
-The Smart Adaptive Visual Tracer system analyzes Python code execution in real-time, tracks changes in fundamental data structures (arrays, trees, graphs), and selects appropriate visualization techniques using LLMs to enhance program comprehension and debugging.
+The Smart Adaptive Visual Tracer system analyzes Python code execution, tracks changes in fundamental data structures (arrays, trees, graphs), and selects appropriate visualization techniques using LLMs to enhance program comprehension and debugging.
 
 ## System Architecture
 
