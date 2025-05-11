@@ -4,6 +4,7 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from typing import Optional, Dict, Any, List
 import json
+import copy
 import re
 import asyncio
 from contextlib import AsyncExitStack
@@ -81,180 +82,213 @@ class MCPClient:
     
     def filter_data_structure_events(self, events, structure_type):
         """
-        Filter data structure events to retain only meaningful visualization-ready data
-        
+        Filter data structure events to retain only meaningful visualization-ready data,
+        now with improved handling for intermediate states in tree recursion.
+
         Args:
             events (list): List of data structure events from the MCP server
             structure_type (str): The type of data structure ('arrays', 'trees', or 'graphs')
-            
+
         Returns:
             list: Filtered list of events suitable for visualization
         """
         if not events:
             return []
-            
-        # Track important variables (usually user-defined)
+
+        # --- Pass 1: Identify Important Variables ---
         important_variables = set()
-        
-        # First pass: identify important variables (user-defined structures)
+        # Define names often used locally in recursion/loops that we *might* want to keep for trees
+        potentially_recursive_local_names = {"node", "current", "temp_node", "child"} # Add others if needed
+
         for event in events:
-            # Focus on create, final_state, and user-specified operations
             name = event.get("name", "")
             operation = event.get("operation", "")
-            
-            # Variables to always keep
-            if any([
-                operation in ["create", "final_state"],  # Creation and final state events
-                operation.startswith("add_"),  # Addition operations (add_child, add_edge, etc.)
-                operation in ["append", "insert", "pop", "remove"],  # List modifications
-                "serialized" not in name.lower() and  # Skip internal serialization variables
-                not name.startswith("obj") and  # Skip internal object references
-                not name.startswith("v") and  # Skip iteration variables
-                name not in ["node", "result", "return_value", "event_data"],  # Skip processing variables
-            ]):
+
+            # Original conditions for identifying important variables
+            is_potentially_important = any([
+                operation in ["create", "final_state"],
+                operation.startswith("add_"),
+                operation in ["append", "insert", "pop", "remove"], # Keep relevant array ops
+                (
+                    "serialized" not in name.lower() and
+                    not name.startswith("obj") and
+                    not name.startswith("v") and
+                    # Keep the original blacklist, but we'll handle tree locals separately
+                    name not in ["node", "result", "return_value", "event_data", "current", "temp_node", "child"]
+                )
+            ])
+
+            if is_potentially_important:
                 important_variables.add(name)
-                
-        # Add special cases for specific data structures
+
+        # Add special cases for top-level structures
         if structure_type == "trees":
-            important_variables.add("root")  # Root nodes are always important
+            important_variables.add("root") # Assume 'root' is a primary entry point
+            # Add other known top-level tree names if applicable
         elif structure_type == "graphs":
-            important_variables.add("graph")  # Graph variables are always important
-            
-        # Second pass: keep only events for important variables and meaningful operations
+            important_variables.add("graph") # Assume 'graph' is primary
+
+        print(f"[Filter Debug] Initial important variables: {important_variables}")
+
+        # --- Pass 2: Filter Events with Context ---
         filtered_events = []
-        
-        # Track previously seen states by variable name
-        previous_states = {}
-        
-        # Track previously seen tree structures for more accurate change detection
-        previous_trees = {}
-        
-        # Track array length history for each variable to detect size changes
+        last_kept_tree_state_content = None # Track the content of the last kept tree state
+        previous_states = {} # For array/graph content comparison
         array_length_history = {}
-        
-        # Track last operation type by variable name to detect operation transitions
         last_operation_by_var = {}
-        
+        self._seen_states = set() # Reset seen states hash check
+
         for event in events:
             name = event.get("name", "")
             operation = event.get("operation", "")
             content = event.get("content")
-            
-            # Skip events for non-important variables
-            if name not in important_variables:
-                continue
-                
-            # Skip internal operations
+
+            # --- Initial Skip Logic ---
+            # Skip internal static method calls etc.
             if operation in ["call", "exit"] and "operation_details" in event and event["operation_details"] and "code" in event["operation_details"] and "@staticmethod" in event["operation_details"]["code"]:
                 continue
-                
-            # Special handling for tree structures to detect node additions and changes
-            if structure_type == "trees" and content:
-                # Check if this is a new or changed tree structure
-                is_meaningful_change = True
-                
-                if name in previous_trees:
-                    prev_tree = previous_trees[name]
-                    
-                    # For trees, compare the structure more thoroughly
-                    if self._is_identical_tree_state(prev_tree, content):
-                        # Skip if this is truly identical (but still keep final_state)
-                        if operation not in ["create", "final_state"]:
-                            is_meaningful_change = False
-                
-                # Store the current tree structure for future comparisons
+
+            # Determine if this event *might* be relevant
+            is_important_var = name in important_variables
+            is_potentially_tree_local = (
+                structure_type == "trees" and
+                name in potentially_recursive_local_names and
+                content and isinstance(content, dict) and 'value' in content # Basic check if content looks like a tree node
+                # More robust check using is_tree_node if available:
+                # and self.DataStructureTracker.is_tree_node(content)
+            )
+
+            # Skip if it's not an important variable AND not a potentially relevant tree local
+            if not is_important_var and not is_potentially_tree_local:
+                continue
+            # --- End Initial Skip Logic ---
+
+
+            # --- Tree Handling ---
+            if structure_type == "trees" and content and (is_important_var or is_potentially_tree_local):
+                # Now we consider this event potentially relevant for the tree visualization
+
+                is_meaningful_change = True # Assume meaningful unless proven otherwise
+
+                # Compare with the content of the *last kept state*, regardless of variable name ('root' vs 'node')
+                if last_kept_tree_state_content is not None:
+                    try:
+                        # Use deep comparison for trees
+                        if self._is_identical_tree_state(last_kept_tree_state_content, content):
+                            # It's identical to the last state we kept.
+                            # Only keep it if it's a critical operation type.
+                            if operation not in ["create", "final_state"] and not operation.startswith("add_"):
+                            # If it's identical AND not a critical op, it's likely redundant
+                                is_meaningful_change = False
+                            # print(f"[Filter Debug] Skipping identical tree state for '{name}' at step {len(filtered_events)}") # Optional debug
+                            # else: # Keep create/final_state even if identical
+                            # print(f"[Filter Debug] Keeping identical tree state for '{name}' due to operation '{operation}'") # Optional debug
+                        # else: # Content is different
+                        # print(f"[Filter Debug] Tree content changed for '{name}'") # Optional debug
+                    except Exception as e:
+                        print(f"Error comparing tree states: {e}. Assuming change.")
+                        is_meaningful_change = True # Err on the side of caution
+
+                # If it's deemed a meaningful change, add it and update the last known state
                 if is_meaningful_change:
-                    previous_trees[name] = content
-                    filtered_events.append(event)
-                
-            # Special handling for arrays to detect length changes and meaningful operations
+                    # IMPORTANT: Use deepcopy to store the state content
+                    # This prevents issues if the original object is mutated later
+                    # before the next comparison happens.
+                    try:
+                        last_kept_tree_state_content = copy.deepcopy(content)
+                        # Normalize the name if it's a local recursive var to the main tree name if needed,
+                        # or decide if the frontend can handle varying names. For simplicity,
+                        # let's keep the original name for now, the frontend might need adjustment
+                        # or we could try to map 'node' back to 'root' if context allows.
+                        # Keeping original name for now:
+                        filtered_events.append(event)
+                        # print(f"[Filter Debug] Added tree event: Name='{name}', Op='{operation}', Step={len(filtered_events)}") # Optional debug
+                    except Exception as e:
+                        print(f"Error deepcopying tree state: {e}. Skipping event.")
+
+
+            # --- Array Handling (Largely Unchanged) ---
             elif structure_type == "arrays" and content and isinstance(content, list):
-                # Determine if this is a meaningful change for an array
+                # Only process arrays associated with important variables
+                if not is_important_var:
+                    continue
+
                 is_meaningful_change = True
                 current_length = len(content)
-                
-                # Initialize length history if we haven't seen this variable before
+
                 if name not in array_length_history:
                     array_length_history[name] = []
-                
-                # Always keep creation, final state, and explicit operations
+
                 if operation in ["create", "final_state", "append", "insert", "pop", "remove"]:
                     is_meaningful_change = True
-                # Check for length changes (always keep these)
                 elif array_length_history[name] and current_length != array_length_history[name][-1]:
                     is_meaningful_change = True
-                # Check for operation type transitions (e.g., from append to something else)
                 elif name in last_operation_by_var and last_operation_by_var[name] != operation:
                     is_meaningful_change = True
-                # Check if content has changed from previous state
                 elif name in previous_states:
-                    prev_content = previous_states[name]
-                    # Only skip if content is identical and we've already determined it's not otherwise meaningful
-                    if json.dumps(content, sort_keys=True) == prev_content:
-                        # Still consider it meaningful if it's a special operation
+                    prev_content_json = previous_states[name]
+                    current_content_json = json.dumps(content, sort_keys=True)
+                    if current_content_json == prev_content_json:
                         if operation not in ["create", "final_state"] and not operation.startswith("add_"):
                             is_meaningful_change = False
-                
-                # Store the variable's state for future comparison
-                previous_states[name] = json.dumps(content, sort_keys=True)
-                
-                # Update array length history
-                array_length_history[name].append(current_length)
-                
-                # Update last operation type
-                last_operation_by_var[name] = operation
-                
-                # Add to filtered events if it's a meaningful change
+
                 if is_meaningful_change:
+                    previous_states[name] = json.dumps(content, sort_keys=True)
+                    array_length_history[name].append(current_length)
+                    last_operation_by_var[name] = operation
                     filtered_events.append(event)
-                
-            # Handling for graphs and other structures 
-            else:
-                # Generate a unique key for this state to detect duplicates
-                if content:
-                    try:
-                        # Hash the full content for more accurate duplicate detection
-                        state_key = f"{name}_{hash(json.dumps(content, sort_keys=True))}"
-                        
-                        # Check if we've seen this exact state before
-                        if hasattr(self, '_seen_states') and state_key in self._seen_states:
-                            # Keep anyway if it's a creation or final state
-                            if operation in ["create", "final_state"]:
-                                pass  # Continue to add this event
+
+            # --- Graph Handling (Largely Unchanged, uses hash comparison) ---
+            elif structure_type == "graphs" and content:
+                # Only process graphs associated with important variables
+                if not is_important_var:
+                    continue
+
+                try:
+                    # Hash the full content for more accurate duplicate detection
+                    state_key = f"{name}_{hash(json.dumps(content, sort_keys=True))}"
+
+                    # Check if we've seen this exact state before
+                    if state_key in self._seen_states:
+                        # Keep anyway if it's a creation or final state
+                        if operation not in ["create", "final_state"]:
                             # Skip if it's a duplicate and not a special operation
-                            elif operation not in ["create", "final_state", "append", "insert", "pop", "remove"] and not operation.startswith("add_"):
+                            if operation not in ["create", "final_state", "append", "insert", "pop", "remove"] and not operation.startswith("add_"):
                                 continue
-                        
-                        # Initialize _seen_states if it doesn't exist
-                        if not hasattr(self, '_seen_states'):
-                            self._seen_states = set()
-                            
-                        self._seen_states.add(state_key)
-                        
-                    except:
-                        pass  # If we can't hash the content, just include the event
-                
-                # Remove internal details that aren't needed for visualization
+
+                    self._seen_states.add(state_key)
+
+                except Exception as e:
+                    # If hashing fails (e.g., unhashable types), keep the event
+                    print(f"Hashing failed for graph state: {e}. Keeping event.")
+                    pass
+
+                # Remove internal details (unchanged)
                 if "operation_details" in event and event["operation_details"] and "code" in event["operation_details"]:
-                    # Keep only user code in operation_details
                     code = event["operation_details"]["code"]
                     if any([
-                        "@staticmethod" in code,
-                        "getattr" in code,
-                        "hasattr" in code,
-                        "operation_history" in code,
-                        "state_key" in code,
-                        "return result" in code
+                        "@staticmethod" in code, "getattr" in code, "hasattr" in code,
+                        "operation_history" in code, "state_key" in code, "return result" in code
                     ]):
-                        # Replace with generic description
                         event["operation_details"]["code"] = f"{operation} operation"
-                
+
                 # Add the filtered event
                 filtered_events.append(event)
-        
-        # Sort events by timestamp to ensure proper animation sequence
+
+            # --- Fallback for other potential types (if any) ---
+            # This part might need adjustment if other structure types are added
+            elif content: # If it's not tree/array/graph but has content
+                if not is_important_var:
+                    continue
+                # Apply generic duplicate check based on previous_states JSON dump?
+                # Or just add if important? For now, let's add if important.
+                filtered_events.append(event)
+
+
+        # Final sort by timestamp
         filtered_events.sort(key=lambda e: e.get("timestamp", 0))
-        
+
+        print(f"[Filter Debug] Filtered {len(events)} raw events down to {len(filtered_events)} events for {structure_type}")
         return filtered_events
 
     def _is_identical_tree_state(self, tree1, tree2):

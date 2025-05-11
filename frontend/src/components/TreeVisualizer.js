@@ -123,29 +123,51 @@ function TreeVisualizer() {
 
     return { added, modified };
   };
+  
 
   // Process tree data for visualization with complete tree reconstruction
   const treeStates = useMemo(() => {
     if (!data) return [];
-    
+
     console.log("Processing tree data:", data);
-    
+
     // Step 1: Filter out internal calls and exits
-    const initialFiltered = data.filter(item => 
-      item.operation !== "call" && 
+    const initialFiltered = data.filter(item =>
+      item.operation !== "call" &&
       item.operation !== "exit"
     );
-    
-    // Step 2: Let's identify which events belong to the main tree structure
-    // First, find out the primary tree name from the final state
+
+    // --- Helper Functions (Cloning, Counting, Comparing - Keep these) ---
+    function cloneTree(node) {
+      if (!node) return null;
+      const clone = { ...node };
+      if (node.children && Array.isArray(node.children)) {
+        clone.children = node.children.map(child => cloneChild(child));
+      }
+      if (node.left) clone.left = cloneTree(node.left);
+      if (node.right) clone.right = cloneTree(node.right);
+      return clone;
+    }
+    function cloneChild(child) { return cloneTree(child); }
+    function countNodesInTree(node) {
+      if (!node) return 0;
+      let count = 1;
+      if (node.children && Array.isArray(node.children)) {
+        node.children.forEach(child => { count += countNodesInTree(child); });
+      }
+      if (node.left) count += countNodesInTree(node.left);
+      if (node.right) count += countNodesInTree(node.right);
+      return count;
+    }
+    // --- (End Helper Functions) ---
+
+
+    // Step 2: Identify main tree name and root value (Keep this logic for anti-flicker)
     let mainTreeName = null;
     const finalStates = initialFiltered.filter(state => state.operation === "final_state");
-    
-    // First try to find the final state with the most complex tree structure
     if (finalStates.length > 0) {
       let mostComplexState = null;
       let maxComplexity = -1;
-      
       for (const state of finalStates) {
         const complexity = countNodesInTree(state.content);
         if (complexity > maxComplexity) {
@@ -153,302 +175,228 @@ function TreeVisualizer() {
           mostComplexState = state;
         }
       }
-      
-      if (mostComplexState) {
-        mainTreeName = mostComplexState.name;
-        console.log(`Identified main tree as "${mainTreeName}" with ${maxComplexity} nodes`);
-      }
+      if (mostComplexState) mainTreeName = mostComplexState.name;
     }
-    
-    // If no final state with a complex structure, try to find the most common node name
     if (!mainTreeName) {
-      const nameCounts = {};
-      initialFiltered.forEach(state => {
-        nameCounts[state.name] = (nameCounts[state.name] || 0) + 1;
-      });
-      
-      let maxCount = 0;
-      for (const [name, count] of Object.entries(nameCounts)) {
-        if (count > maxCount) {
-          maxCount = count;
-          mainTreeName = name;
+        const nameCounts = {};
+        initialFiltered.forEach(state => { nameCounts[state.name] = (nameCounts[state.name] || 0) + 1; });
+        let maxCount = 0;
+        for (const [name, count] of Object.entries(nameCounts)) {
+            if (count > maxCount) { maxCount = count; mainTreeName = name; }
         }
-      }
-      
-      console.log(`Using most common node name "${mainTreeName}" as main tree`);
     }
-    
-    if (!mainTreeName) {
-      console.warn("Could not identify main tree structure, defaulting to 'root'");
-      mainTreeName = "root";
-    }
-    
-    // Function to deep clone a tree object to avoid reference issues
-    function cloneTree(node) {
-      if (!node) return null;
-      
-      const clone = { ...node };
-      
-      if (node.children && Array.isArray(node.children)) {
-        clone.children = node.children.map(child => cloneChild(child));
-      }
-      
-      if (node.left) {
-        clone.left = cloneTree(node.left);
-      }
-      
-      if (node.right) {
-        clone.right = cloneTree(node.right);
-      }
-      
-      return clone;
-    }
-    
-    // Helper for cloning child nodes in an array
-    function cloneChild(child) {
-      return cloneTree(child);
-    }
-    
-    // Functions to count nodes in a tree
-    function countNodesInTree(node) {
-      if (!node) return 0;
-      let count = 1; // Count this node
-      
-      if (node.children && Array.isArray(node.children)) {
-        node.children.forEach(child => {
-          count += countNodesInTree(child);
-        });
-      }
-      
-      if (node.left) count += countNodesInTree(node.left);
-      if (node.right) count += countNodesInTree(node.right);
-      
-      return count;
-    }
-    
-    // Get the root value from the final state to identify the main tree
+    if (!mainTreeName) mainTreeName = "root"; // Default
+
     let mainRootValue = null;
     if (finalStates.length > 0) {
-      // Find the most complex final state
-      let mostComplexFinalState = finalStates[0];
-      let maxComplexity = countNodesInTree(mostComplexFinalState.content);
-      
-      for (let i = 1; i < finalStates.length; i++) {
-        const complexity = countNodesInTree(finalStates[i].content);
-        if (complexity > maxComplexity) {
-          maxComplexity = complexity;
-          mostComplexFinalState = finalStates[i];
-        }
-      }
-      
-      // Get the root value of the most complex final state
-      if (mostComplexFinalState && mostComplexFinalState.content) {
-        mainRootValue = mostComplexFinalState.content.value;
-        console.log(`Identified main root value as ${mainRootValue}`);
-      }
+        let mostComplexFinalState = finalStates.find(s => s.name === mainTreeName && s.content) || finalStates.find(s => s.content);
+        if (mostComplexFinalState) mainRootValue = mostComplexFinalState.content.value;
     }
-    
-    // If we couldn't find a root value from the final state, get it from the first state
     if (mainRootValue === null && initialFiltered.length > 0) {
-      // Find the first event with content
-      for (const event of initialFiltered) {
-        if (event.content && event.content.value !== undefined) {
-          mainRootValue = event.content.value;
-          console.log(`Using initial root value as ${mainRootValue}`);
-          break;
+        const firstValidEvent = initialFiltered.find(event => event.name === mainTreeName && event.content && event.content.value !== undefined);
+        if (firstValidEvent) mainRootValue = firstValidEvent.content.value;
+        else {
+            const fallbackEvent = initialFiltered.find(event => event.content && event.content.value !== undefined);
+             if(fallbackEvent) mainRootValue = fallbackEvent.content.value;
         }
-      }
     }
-    
-    // Process events chronologically
+    console.log(`Using main tree name: "${mainTreeName}", root value: ${mainRootValue}`);
+    // --- (End Identify Main Tree) ---
+
+    // Step 3: Process Events Chronologically to build significant states
     const sortedEvents = [...initialFiltered].sort((a, b) => a.timestamp - b.timestamp);
-    
-    // First, find all events for the main tree
     const mainTreeEvents = sortedEvents.filter(evt => evt.name === mainTreeName);
-    
-    // Track the maximum tree size we've seen so far
+
     let maxTreeSize = 0;
-    
-    // We'll build up the main tree progressively, screening out subtree operations
-    let lastKnownMainTree = null;
+    let lastKnownSignificantTree = null; // Renamed for clarity
+    let lastRawEventContent = null; // Track content of the *previous raw event*
     const significantTreeStates = [];
-    
-    // Process all main tree events in chronological order
+
+    // *** NEW/MODIFIED LOGIC START ***
+    // Helper function to deeply compare trees, checking structure AND value
+    function checkTreeDifferences(tree1, tree2) {
+        let structureChanged = false;
+        let valueChanged = false;
+
+        function compare(node1, node2) {
+            if (structureChanged && valueChanged) return; // Early exit if both found
+
+            // Structure diff: One node exists, the other doesn't
+            if (!node1 && node2) { structureChanged = true; valueChanged = true; return; } // Node added
+            if (node1 && !node2) { structureChanged = true; valueChanged = true; return; } // Node removed
+            if (!node1 && !node2) return; // Both null, no change
+
+            // Value diff: Nodes exist, but values differ
+            if (node1.value !== node2.value) {
+                valueChanged = true;
+                // Optional: consider value change a structural change too if needed
+                // structureChanged = true;
+            }
+
+            // Recursive checks
+            // Binary comparison
+            compare(node1.left, node2.left);
+            compare(node1.right, node2.right);
+
+            // N-ary comparison
+            const children1 = node1.children || [];
+            const children2 = node2.children || [];
+            if (children1.length !== children2.length) {
+                structureChanged = true; // Different number of children = structure change
+                valueChanged = true; // Likely implies value changes too
+            } else {
+                for (let i = 0; i < children1.length; i++) {
+                    compare(children1[i], children2[i]);
+                }
+            }
+        }
+
+        compare(tree1, tree2);
+        return { structureChanged, valueChanged };
+    }
+    // *** NEW/MODIFIED LOGIC END ***
+
     for (let i = 0; i < mainTreeEvents.length; i++) {
-      const event = mainTreeEvents[i];
-      
-      // Skip events without content
-      if (!event.content) continue;
-      
-      // CRITICAL: Skip events where the root value doesn't match the main tree's root value
-      // This is the key to eliminating the subtree flickering
-      if (mainRootValue !== null && event.content.value !== mainRootValue) {
-        console.log(`Skipping event with different root value: ${event.content.value} vs ${mainRootValue}`);
-        continue;
-      }
-      
-      const currentTreeNodeCount = countNodesInTree(event.content);
-      
-      // For the first event, always include it
-      if (!lastKnownMainTree) {
-        lastKnownMainTree = cloneTree(event.content);
-        significantTreeStates.push({
-          ...event,
-          content: cloneTree(event.content)
-        });
-        maxTreeSize = currentTreeNodeCount;
-        continue;
-      }
-      
-      const lastTreeNodeCount = countNodesInTree(lastKnownMainTree);
-      
-      // Check operation type - important for tracking modifications
-      const isModificationOperation = event.operation_details && 
-                                    event.operation_details.code && 
-                                    (event.operation_details.code.includes("value") || 
-                                    event.operation_details.code.includes("= None") || 
-                                    event.operation_details.code.includes("= TreeNode"));
-      
-      // For modifications, always include the event even if node count decreases
-      if (isModificationOperation) {
-        console.log(`Including modification operation: ${event.operation_details.code}`);
-        lastKnownMainTree = cloneTree(event.content);
-        significantTreeStates.push({
-          ...event,
-          content: cloneTree(event.content)
-        });
-        maxTreeSize = Math.max(maxTreeSize, currentTreeNodeCount);
-        continue;
-      }
-      
-      // Main filtering criteria:
-      // 1. Tree must be at least as large as previous state OR
-      // 2. This is the final state (which might be smaller due to removals)
-      const isFinalState = event.operation === "final_state";
-      const isGrowingTree = currentTreeNodeCount >= lastTreeNodeCount;
-      
-      // Never accept a tree that's substantially smaller than the max size we've seen
-      // unless it's a final state or explicit modification
-      if (!isFinalState && currentTreeNodeCount < maxTreeSize * 0.9) {
-        console.log(`Skipping tree that's too small: ${currentTreeNodeCount} vs max ${maxTreeSize}`);
-        continue;
-      }
-      
-      // Include the state if it's growing or it's the final state
-      if (isGrowingTree || isFinalState) {
-        // Check for structural differences to avoid duplicates
-        if (!areTreesStructurallyIdentical(lastKnownMainTree, event.content)) {
-          lastKnownMainTree = cloneTree(event.content);
-          significantTreeStates.push({
-            ...event,
-            content: cloneTree(event.content)
-          });
-          maxTreeSize = Math.max(maxTreeSize, currentTreeNodeCount);
+        const event = mainTreeEvents[i];
+        const currentRawEventContent = event.content; // Content of the current raw event
+
+        if (!currentRawEventContent) continue;
+
+        // CRITICAL ANTI-FLICKER CHECK (Preserved)
+        if (mainRootValue !== null && currentRawEventContent.value !== mainRootValue) {
+            console.log(`Skipping event with different root value: ${currentRawEventContent.value} vs ${mainRootValue}`);
+            lastRawEventContent = cloneTree(currentRawEventContent); // Still update last raw content
+            continue;
         }
-      }
+
+        const currentTreeNodeCount = countNodesInTree(currentRawEventContent);
+
+        // Always include the very first valid state
+        if (!lastKnownSignificantTree) {
+            const clonedContent = cloneTree(currentRawEventContent);
+            lastKnownSignificantTree = clonedContent;
+            significantTreeStates.push({ ...event, content: clonedContent });
+            maxTreeSize = currentTreeNodeCount;
+            lastRawEventContent = clonedContent; // Initialize last raw content
+            console.log(`Keeping first state: Step ${significantTreeStates.length}, Time: ${event.timestamp}`);
+            continue;
+        }
+
+        // *** NEW/MODIFIED LOGIC START ***
+        // Determine if the current raw state represents a meaningful change
+        let keepThisState = false;
+        let reason = "";
+
+        // Reason 1: Explicit Modification detected (using improved check)
+        // Check if the current raw state changed *at all* (value or structure) from the *previous raw state*
+        const diffFromPrevRaw = checkTreeDifferences(lastRawEventContent, currentRawEventContent);
+        const isMeaningfulChangeFromPrevious = diffFromPrevRaw.structureChanged || diffFromPrevRaw.valueChanged;
+
+        if (isMeaningfulChangeFromPrevious) {
+             // If it changed from the previous raw event, it represents a step.
+             // Now, we *also* check if it's different from the last *kept* significant state
+             // to avoid visual duplicates if multiple raw steps result in the same visual state.
+             const diffFromLastKept = checkTreeDifferences(lastKnownSignificantTree, currentRawEventContent);
+             if (diffFromLastKept.structureChanged || diffFromLastKept.valueChanged) {
+                 keepThisState = true;
+                 reason = "Changed from previous raw state AND different from last kept significant state.";
+             } else {
+                 reason = "Changed from previous raw state BUT identical to last kept significant state (skipped).";
+             }
+        } else {
+             reason = "No change detected from previous raw state.";
+        }
+
+
+        // Reason 2: Final State (Always keep final states to show the end result)
+        const isFinalState = event.operation === "final_state";
+        if (isFinalState) {
+            // Keep if it's different from the last kept state
+             const diffFromLastKept = checkTreeDifferences(lastKnownSignificantTree, currentRawEventContent);
+             if (diffFromLastKept.structureChanged || diffFromLastKept.valueChanged) {
+                 keepThisState = true;
+                 reason = "Final state and different from last kept.";
+             } else {
+                 // If final state is identical to last kept, we might still want to update
+                 // the timestamp/operation details of the last kept state if needed,
+                 // but we don't add a new *visual* step.
+                 // For simplicity now, we just don't add it if identical.
+                 reason = "Final state but identical to last kept (skipped).";
+             }
+        }
+
+        // Reason 3: Anti-Shrinkage Override (Relaxed threshold)
+        // Only apply if we haven't decided to keep it yet
+        if (!keepThisState && !isFinalState) {
+            // Relaxed threshold: allow shrinking up to 15% OR by less than 3 nodes absolute difference
+            const shrunkTooMuch = currentTreeNodeCount < maxTreeSize * 0.85 && (maxTreeSize - currentTreeNodeCount >= 3);
+            if (shrunkTooMuch) {
+                reason = `Shrunk too much (${currentTreeNodeCount} vs max ${maxTreeSize}), and not kept for other reasons (skipped).`;
+                // Update last raw content before skipping
+                lastRawEventContent = cloneTree(currentRawEventContent);
+                console.log(reason);
+                continue; // Skip this state
+            }
+        }
+
+        // --- Decision ---
+        if (keepThisState) {
+            const clonedContent = cloneTree(currentRawEventContent);
+            lastKnownSignificantTree = clonedContent; // Update the last *significant* tree
+            significantTreeStates.push({ ...event, content: clonedContent });
+            maxTreeSize = Math.max(maxTreeSize, currentTreeNodeCount);
+            console.log(`Keeping state: Step ${significantTreeStates.length}, Reason: ${reason}, Time: ${event.timestamp}`);
+        } else {
+            console.log(`Skipping state: Reason: ${reason}, Time: ${event.timestamp}`);
+        }
+
+        // Always update the last *raw* event content for the next iteration's comparison
+        lastRawEventContent = cloneTree(currentRawEventContent);
+        // *** NEW/MODIFIED LOGIC END ***
     }
-    
-    // Helper function to compare trees for structural equality
-    function areTreesStructurallyIdentical(tree1, tree2) {
-      // Handle null cases
-      if (!tree1 && !tree2) return true;
-      if (!tree1 || !tree2) return false;
-      
-      // Compare values
-      if (tree1.value !== tree2.value) return false;
-      
-      // Compare children arrays (non-binary trees)
-      if (tree1.children && tree2.children) {
-        if (tree1.children.length !== tree2.children.length) return false;
-        
-        // Check each child
-        for (let i = 0; i < tree1.children.length; i++) {
-          if (!areTreesStructurallyIdentical(tree1.children[i], tree2.children[i])) {
-            return false;
-          }
-        }
-      } 
-      else if (tree1.children || tree2.children) {
-        return false; // One has children, the other doesn't
-      }
-      
-      // Compare left/right properties (binary trees)
-      if (tree1.left || tree2.left) {
-        if (!areTreesStructurallyIdentical(tree1.left, tree2.left)) {
-          return false;
-        }
-      }
-      
-      if (tree1.right || tree2.right) {
-        if (!areTreesStructurallyIdentical(tree1.right, tree2.right)) {
-          return false;
-        }
-      }
-      
-      return true;
-    }
-    
+
+    // --- (Structural Identity Function - Can be removed if checkTreeDifferences is used everywhere) ---
+    /* function areTreesStructurallyIdentical(tree1, tree2) { ... } // Keep for reference or if needed elsewhere */
+
     console.log(`Reconstructed ${significantTreeStates.length} meaningful tree states`);
-    
-    // Step 4: Calculate changes between consecutive states
+
+    // Step 4: Calculate changes between consecutive *significant* states
     return significantTreeStates.map((treeData, index) => {
-      // Set a consistent name for the tree states
       const stateWithConsistentName = {
         ...treeData,
-        name: mainTreeName, // Ensure all states have the same name
+        name: mainTreeName,
         stepNumber: index + 1,
       };
-      
-      // Calculate changes from previous state
+
       if (index > 0) {
+        // Calculate changes based on the content of the *previous significant state*
         stateWithConsistentName.changes = calculateChanges(
           treeData.content,
           significantTreeStates[index - 1].content
         );
       } else {
-        // For the first state, everything is considered "added"
         stateWithConsistentName.changes = calculateInitialChanges(treeData.content);
       }
-      
       return stateWithConsistentName;
     });
-    
-    // Helper to calculate changes for the first state
+
+    // Helper for initial changes (Keep this)
     function calculateInitialChanges(tree) {
-      const added = [];
-      
-      // Function to mark all nodes as added
-      function markNodesAsAdded(node, path = 'root') {
-        if (!node) return;
-        
-        // Add this node
-        added.push(path);
-        
-        // Process children array (non-binary tree)
-        if (node.children && Array.isArray(node.children)) {
-          node.children.forEach((child, index) => {
-            markNodesAsAdded(child, `${path}.children[${index}]`);
-          });
+        const added = [];
+        function markNodesAsAdded(node, path = 'root') {
+            if (!node) return;
+            added.push(path);
+            if (node.children && Array.isArray(node.children)) {
+                node.children.forEach((child, index) => { markNodesAsAdded(child, `${path}.children[${index}]`); });
+            }
+            if (node.left) markNodesAsAdded(node.left, `${path}.left`);
+            if (node.right) markNodesAsAdded(node.right, `${path}.right`);
         }
-        
-        // Process left/right (binary tree)
-        if (node.left) {
-          markNodesAsAdded(node.left, `${path}.left`);
-        }
-        
-        if (node.right) {
-          markNodesAsAdded(node.right, `${path}.right`);
-        }
-      }
-      
-      markNodesAsAdded(tree);
-      
-      return {
-        added: added,
-        modified: []
-      };
+        markNodesAsAdded(tree);
+        return { added: added, modified: [] };
     }
-  }, [data]);
+
+  }, [data]); // Dependency array remains [data]
 
   
   // Set up polling for data updates and initial load
