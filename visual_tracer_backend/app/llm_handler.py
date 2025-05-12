@@ -234,8 +234,8 @@ def get_visualization_for_trees(tree_data: list) -> dict:
 
 def get_visualization_for_graphs(graph_data: list) -> dict:
     """
-    Selects the best visualization for graph data using Mistral AI.
-    Uses the exact prompt and logic from the original client.py.
+    Selects the best visualization for graph data.
+    Calculates metrics in Python and provides them to Mistral AI for a deterministic decision.
     """
     if not mistral_client:
         print("LLM Handler: Mistral client not initialized. Returning default graph visualization.")
@@ -245,49 +245,115 @@ def get_visualization_for_graphs(graph_data: list) -> dict:
         }
 
     try:
+        # --- Calculate graph metrics from the LATEST graph state ---
+        num_nodes = 0
+        total_directed_connections = 0
+        max_outgoing_connections = 0
+        connection_density = 0.0
+
+        # Use the content of the last event in graph_data, assuming it's the most complete/recent state
+        # If graph_data is empty, or last event has no content, metrics will remain 0.
+        latest_graph_content = None
+        if graph_data and len(graph_data) > 0:
+            # Iterate backwards to find the last event with graph content
+            for event in reversed(graph_data):
+                if event.get("content") and isinstance(event.get("content"), dict):
+                    latest_graph_content = event.get("content")
+                    break
+        
+        if latest_graph_content:
+            # 1. Count nodes
+            # A node exists if it's a key or if it appears in any adjacency list.
+            nodes_set = set(latest_graph_content.keys())
+            for adj_list in latest_graph_content.values():
+                if isinstance(adj_list, list):
+                    for target_node in adj_list:
+                        nodes_set.add(str(target_node)) # Ensure nodes are strings for consistency
+            num_nodes = len(nodes_set)
+
+            # 2. Count total directed connections & max outgoing connections
+            current_max_outgoing = 0
+            for source_node, adj_list in latest_graph_content.items():
+                if isinstance(adj_list, list):
+                    num_outgoing = len(adj_list)
+                    total_directed_connections += num_outgoing
+                    if num_outgoing > current_max_outgoing:
+                        current_max_outgoing = num_outgoing
+            max_outgoing_connections = current_max_outgoing
+            
+            # 3. Calculate connection density
+            if num_nodes > 1: # Density is undefined for 0 or 1 node.
+                # For directed graph, max possible edges = N * (N-1)
+                max_possible_connections = num_nodes * (num_nodes - 1)
+                if max_possible_connections > 0:
+                    connection_density = total_directed_connections / max_possible_connections
+                else: # Handles num_nodes = 1 case specifically where denominator is 0
+                    connection_density = 0.0 # Or 1.0 if self-loops considered and present
+            elif num_nodes == 1 and total_directed_connections > 0 : # Single node with self-loop
+                connection_density = 1.0 
+            else: # 0 nodes, or 1 node with no self-loop
+                connection_density = 0.0
+
+        # --- Determine visualization type and rationale based on calculated metrics ---
+        viz_type = "FORCE_DIRECTED"
+        selection = "1"
+        
+        # Rule 4: IF CONNECTION DENSITY > 0.25 → ADJACENCY_MATRIX
+        if connection_density > 0.25:
+            viz_type = "ADJACENCY_MATRIX"
+            selection = "2"
+        # Rule 5: IF ANY NODE HAS MORE THAN 3 OUTGOING CONNECTIONS → ADJACENCY_MATRIX
+        # This rule overrides the previous one if it leads to Adjacency Matrix
+        if max_outgoing_connections > 3:
+            viz_type = "ADJACENCY_MATRIX"
+            selection = "2"
+            
+        rationale = (
+            f"Calculated metrics: Nodes: {num_nodes}, Total Directed Connections: {total_directed_connections}, "
+            f"Connection Density: {connection_density:.3f}, Max Outgoing Connections: {max_outgoing_connections}. "
+            f"Based on these metrics, {viz_type} was selected."
+        )
+        if viz_type == "ADJACENCY_MATRIX":
+            if connection_density > 0.25 and max_outgoing_connections > 3:
+                 rationale = (f"Connection density ({connection_density:.3f}) is > 0.25 AND "
+                              f"max outgoing connections ({max_outgoing_connections}) is > 3. ADJACENCY_MATRIX selected.")
+            elif connection_density > 0.25:
+                rationale = f"Connection density ({connection_density:.3f}) is > 0.25. ADJACENCY_MATRIX selected."
+            elif max_outgoing_connections > 3:
+                 rationale = f"Max outgoing connections ({max_outgoing_connections}) is > 3. ADJACENCY_MATRIX selected."
+        else: # FORCE_DIRECTED
+            rationale = (f"Connection density ({connection_density:.3f}) is not > 0.25 AND "
+                         f"max outgoing connections ({max_outgoing_connections}) is not > 3. FORCE_DIRECTED selected.")
+
+
+        # --- Construct the prompt for LLM, providing calculated values ---
+        # The LLM is now just confirming the decision based on given numbers and outputting the JSON.
+        # We also tell the LLM the decision we made in Python code.
         prompt = (
-            "You are an expert in data structure visualization. Your task is to select the most appropriate visualization technique for the given graph operations data.\n\n"
-            f"Graph Data:\n{json.dumps(graph_data, indent=2)}\n\n" # Ensure graph_data is serializable
+            f"CALCULATED NUMBER OF NODES: {num_nodes}\n"
+            f"CALCULATED TOTAL DIRECTED CONNECTIONS: {total_directed_connections}\n"
+            f"CALCULATED CONNECTION DENSITY: {connection_density:.3f}\n" # Use a reasonable precision
+            f"CALCULATED MAXIMUM OUTGOING CONNECTIONS FOR ANY NODE: {max_outgoing_connections}\n\n"
             "MANDATORY SELECTION RULES - YOU MUST FOLLOW THESE EXACTLY:\n"
-            "1. COUNT THE TOTAL NUMBER OF DIRECTED CONNECTIONS in the graph - each item in any array counts as ONE directed connection\n"
-            "2. COUNT THE TOTAL NUMBER OF NODES in the graph\n"
-            "3. CALCULATE CONNECTION DENSITY using this formula: (Total DIRECTED Connections) / (Nodes × (Nodes-1))\n"
-            "4. IF CONNECTION DENSITY > 0.25 → ADJACENCY_MATRIX (selection \"2\")\n"
-            "5. IF ANY NODE HAS MORE THAN 3 OUTGOING CONNECTIONS → ADJACENCY_MATRIX (selection \"2\")\n"
-            "6. OTHERWISE → FORCE_DIRECTED (selection \"1\")\n\n"
-            "STRICT DETECTION INSTRUCTIONS:\n"
-            "- For each node, count ONLY the outgoing connections (the length of its array)\n"
-            "- Do NOT count incoming connections when applying rule #5\n"
-            "- Sum the lengths of all arrays to get total directed connections\n"
-            "- The connection density should be calculated using only the formula above\n\n"
-            "CORRECT VISUALIZATION CHOICES:\n"
-            "1. FORCE_DIRECTED: Use for graphs with lower connection density.\n"
-            "   - Suitable for visualizing relationships with clear structure\n"
-            "   - Better for graphs where nodes have 3 or fewer OUTGOING connections\n\n"
-            "2. ADJACENCY_MATRIX: Use for graphs with higher connection density.\n"
-            "   - Better for graphs where nodes have many outgoing connections\n"
-            "   - Essential when the overall graph is densely connected (density > 0.25)\n\n"
-            "VERIFICATION PROCESS:\n"
-            "1. Explicitly count all nodes in the graph\n"
-            "2. Sum the lengths of all adjacency lists to get total DIRECTED connections\n"
-            "3. Calculate the density ratio using the formula above\n"
-            "4. For each node, count ONLY its outgoing connections (array length)\n"
-            "5. Apply the rules above with NO EXCEPTIONS\n\n"
-            "Respond with a JSON object in this exact format - use double quotes and avoid escape sequences:\n"
+            "1. IF CALCULATED CONNECTION DENSITY > 0.25 → ADJACENCY_MATRIX (selection \"2\")\n"
+            "2. IF CALCULATED MAXIMUM OUTGOING CONNECTIONS FOR ANY NODE > 3 → ADJACENCY_MATRIX (selection \"2\")\n"
+            "3. OTHERWISE → FORCE_DIRECTED (selection \"1\")\n\n"
+            "Based on the above CALCULATED values and the MANDATORY SELECTION RULES, the chosen visualization is "
+            f"{viz_type} (selection \"{selection}\").\n\n"
+            "YOU MUST RETURN THE FOLLOWING JSON OBJECT EXACTLY AS SPECIFIED, REFLECTING THIS DECISION:\n"
             "{\n"
-            "  \"selection\": \"1\",  // Use \"1\" for FORCE_DIRECTED, \"2\" for ADJACENCY_MATRIX\n"
-            "  \"visualization_type\": \"FORCE_DIRECTED\",  // The name in CAPS matching your selection\n"
-            "  \"rationale\": \"Brief explanation including the calculated density metric and maximum outgoing connections per node\"\n"
+            f"  \"selection\": \"{selection}\",\n"
+            f"  \"visualization_type\": \"{viz_type}\",\n"
+            f"  \"rationale\": \"{rationale}\"\n"
             "}\n"
         )
-        # --- End of prompt ---
 
-        print(f"LLM Handler (Graphs): Sending prompt to Mistral:\n{prompt[:500]}...") # Log snippet
+        print(f"LLM Handler (Graphs): Sending prompt to Mistral:\n{prompt[:600]}...")
 
         response = mistral_client.chat(
-            model="mistral-small", # Or your preferred model
+            model="mistral-small", 
             messages=[
-                ChatMessage(role="system", content="You are an expert in data structure visualization. Return only valid JSON with no escape sequences."),
+                ChatMessage(role="system", content="You are an expert in data structure visualization. Return only valid JSON with no escape sequences, exactly as instructed."),
                 ChatMessage(role="user", content=prompt)
             ]
         )
@@ -295,15 +361,35 @@ def get_visualization_for_graphs(graph_data: list) -> dict:
         raw_response_content = response.choices[0].message.content.strip()
         print(f"LLM Handler (Graphs): Raw Mistral AI Response:\n{raw_response_content}")
         
-        selection_data = _parse_llm_json_response(raw_response_content)
-        print(f"LLM Handler (Graphs): Parsed selection: {selection_data}")
+        # Attempt to parse the response. If it's malformed but the Python logic is sound,
+        # we can potentially fall back to the Python-determined values.
+        try:
+            selection_data = _parse_llm_json_response(raw_response_content)
+            # Verify LLM output against Python calculation for safety, though it should match.
+            if selection_data.get("visualization_type") != viz_type or \
+               selection_data.get("selection") != selection:
+                print(f"LLM Handler (Graphs): Warning - LLM output differs from Python pre-calculation. LLM: {selection_data}, Python: {{'selection': '{selection}', 'visualization_type': '{viz_type}'}}. Using Python's determination.")
+                selection_data = {
+                    "selection": selection,
+                    "visualization_type": viz_type,
+                    "rationale": rationale + " (Decision confirmed by Python pre-calculation due to LLM output discrepancy)."
+                }
+        except ValueError:
+             print(f"LLM Handler (Graphs): LLM response parsing failed. Falling back to Python pre-calculated decision.")
+             selection_data = {
+                "selection": selection,
+                "visualization_type": viz_type,
+                "rationale": rationale + " (Decision made by Python pre-calculation due to LLM response parsing failure)."
+            }
+
+        print(f"LLM Handler (Graphs): Final selection: {selection_data}")
         return selection_data
 
     except Exception as e:
         print(f"LLM Handler (Graphs): Error selecting visualization: {e}")
         traceback.print_exc()
         return {
-            "selection": "1", "visualization_type": "FORCE_DIRECTED",
+            "selection": "1", "visualization_type": "FORCE_DIRECTED", # Fallback default
             "rationale": f"Default selection due to error: {str(e)}"
         }
 
