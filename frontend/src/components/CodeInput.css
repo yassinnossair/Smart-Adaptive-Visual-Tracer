@@ -130,3 +130,23 @@
   background-color: #161922 !important;
   color: #e0e0e0 !important;
 }
+
+/* Example in CodeInput.css */
+.example-buttons-container {
+  /* Add any specific container styling if needed */
+  max-height: 200px; /* Or a percentage, adjust as needed */
+  overflow-y: auto; /* Add scroll if many example rows */
+  margin-bottom: 1rem; /* Space before alerts/analyze button */
+}
+
+.example-row .example-label span {
+  color: var(--text-color); /* Or your desired label color */
+  font-size: 0.9rem;
+}
+
+.example-button {
+  margin-right: 0.5rem; /* Spacing between example buttons */
+  margin-bottom: 0.5rem; /* Spacing if buttons wrap */
+  font-size: 0.8rem; /* Smaller font for example buttons */
+  padding: 0.25rem 0.5rem; /* Smaller padding */
+}
