@@ -224,10 +224,42 @@ function ArrayVisualizer() {
     };
   }, [isPlaying, currentStep, arrayStates.length, playbackSpeed]);
 
+  // Helper function to normalize LLM visualization type strings
+  const normalizeLLMVizType = (typeStr) => {
+    if (typeof typeStr !== 'string' || !typeStr.trim()) {
+      return ""; // Return empty string for non-strings or empty/whitespace-only strings
+    }
+
+    let normalized = typeStr.trim();
+
+    // Attempt to split known compound words if no spaces/underscores exist
+    // This specifically targets "TimelineArray" and "timelinearray" for TIMELINE_ARRAY
+    if (/^timelinearray$/i.test(normalized)) { // Matches "timelinearray" or "TimelineArray" etc.
+      normalized = "Timeline Array"; // Convert to a spaced version first
+    }
+    // Add similar specific rules here if other types have common conjoined variations
+    // e.g., if (/^elementfocused$/i.test(normalized)) normalized = "Element Focused";
+
+
+    // Add a space before any uppercase letter that is preceded by a lowercase letter or number
+    // or an uppercase letter followed by a lowercase letter (helps with PascalCase/camelCase)
+    normalized = normalized.replace(/([a-z0-9])([A-Z])/g, '$1 $2');
+    normalized = normalized.replace(/([A-Z])([A-Z][a-z])/g, '$1 $2');
+
+    // Convert to uppercase
+    normalized = normalized.toUpperCase();
+
+    // Replace one or more whitespace characters OR existing underscores with a single underscore.
+    // Also, remove any leading/trailing underscores.
+    normalized = normalized.replace(/[\s_]+/g, '_').replace(/^_+|_+$/g, '');
+
+    return normalized;
+  };
+
   // D3 Timeline Visualization - Simplified
 useEffect(() => {
-  if (!arrayStates.length || !timelineRef.current || 
-      visualizationType !== "TIMELINE_ARRAY") return;
+  if (!arrayStates.length || !timelineRef.current ||
+    normalizeLLMVizType(visualizationType) !== "TIMELINE_ARRAY") return;
   
   const container = d3.select(timelineRef.current);
   container.selectAll("*").remove(); // Clear previous visualization
